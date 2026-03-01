@@ -1,0 +1,26 @@
+# Go binaries and build artifacts
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Local environment and secrets
+.env
+deploy/secrets.yaml
+
+# Local databases
+*.db
+
+# Session cache artifacts
+sessions/cache/*.md
+
+# Existing workspace ignores
+/docs/
+/tmp/
+.gocache-build/
+.gocache-vet/
+dashboard/node_modules/

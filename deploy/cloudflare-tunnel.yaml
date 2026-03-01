@@ -1,0 +1,74 @@
+# Optional: deploy a dedicated cloudflared instance for hivemind dashboard.
+# Use this only if you don't want to reuse the existing cloudflared deployment.
+# If cloudflared already runs centrally, merge the ingress rule below into its config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-hivemind-config
+  namespace: hivemind
+data:
+  config.yaml: |
+    tunnel: REPLACE_WITH_TUNNEL_UUID
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    ingress:
+      - hostname: dashboard.example.com
+        service: http://hivemind-orchestrator-svc.hivemind.svc.cluster.local:8080
+      - service: http_status:404
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared-hivemind
+  namespace: hivemind
+  labels:
+    app: cloudflared-hivemind
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared-hivemind
+  template:
+    metadata:
+      labels:
+        app: cloudflared-hivemind
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2025.2.1
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --config
+            - /etc/cloudflared/config.yaml
+            - run
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config.yaml
+              subPath: config.yaml
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-hivemind-config
+        - name: creds
+          secret:
+            secretName: cloudflared-hivemind-credentials
+
+# Required secret format for dedicated tunnel:
+# apiVersion: v1
+# kind: Secret
+# metadata:
+#   name: cloudflared-hivemind-credentials
+#   namespace: hivemind
+# type: Opaque
+# stringData:
+#   credentials.json: '{"AccountTag":"...","TunnelSecret":"...","TunnelID":"..."}'

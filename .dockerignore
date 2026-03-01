@@ -1,0 +1,11 @@
+.git
+.gocache-build
+.gocache-vet
+bin
+*.db
+sessions/cache
+tmp
+docs
+
+dashboard/node_modules
+dashboard/dist

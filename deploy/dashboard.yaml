@@ -1,0 +1,49 @@
+# Optional deployment for option (B): standalone static frontend (nginx).
+# Default architecture uses option (A): embedded frontend in hivemind-orchestrator.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hivemind-dashboard
+  namespace: hivemind
+  labels:
+    app: hivemind-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hivemind-dashboard
+  template:
+    metadata:
+      labels:
+        app: hivemind-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: ghcr.io/zyrak/hivemind-dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hivemind-dashboard-svc
+  namespace: hivemind
+  labels:
+    app: hivemind-dashboard
+spec:
+  type: ClusterIP
+  selector:
+    app: hivemind-dashboard
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
