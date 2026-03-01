@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zyrak/hivemind/internal/state"
+	"github.com/zyrakk/hivemind/internal/state"
 )
 
 var allowedEventTypes = map[string]struct{}{

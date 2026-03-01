@@ -11,13 +11,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zyrak/hivemind/internal/dashboard"
-	"github.com/zyrak/hivemind/internal/evaluator"
-	"github.com/zyrak/hivemind/internal/launcher"
-	"github.com/zyrak/hivemind/internal/llm"
-	"github.com/zyrak/hivemind/internal/notify"
-	"github.com/zyrak/hivemind/internal/planner"
-	"github.com/zyrak/hivemind/internal/state"
+	"github.com/zyrakk/hivemind/internal/dashboard"
+	"github.com/zyrakk/hivemind/internal/evaluator"
+	"github.com/zyrakk/hivemind/internal/launcher"
+	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/notify"
+	"github.com/zyrakk/hivemind/internal/planner"
+	"github.com/zyrakk/hivemind/internal/state"
 )
 
 func main() {

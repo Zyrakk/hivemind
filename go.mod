@@ -1,4 +1,4 @@
-module github.com/zyrak/hivemind
+module github.com/zyrakk/hivemind
 
 go 1.22
 

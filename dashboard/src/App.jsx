@@ -15,7 +15,7 @@ import { mockState } from './mockData';
 import ProjectDetail from './views/ProjectDetail';
 import ProjectContext from './views/ProjectContext';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const POLL_INTERVAL_MS = 15000;
 
 function normalizeState(payload) {

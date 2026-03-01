@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: dashboard
-          image: ghcr.io/zyrak/hivemind-dashboard:latest
+          image: ghcr.io/zyrakk/hivemind-dashboard:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zyrak/hivemind/internal/state"
+	"github.com/zyrakk/hivemind/internal/state"
 )
 
 func TestHealthEndpoint(t *testing.T) {

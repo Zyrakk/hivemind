@@ -184,12 +184,12 @@ export const mockProjectDetails = {
         ]
       },
       quick_links: {
-        repository: 'https://github.com/zyrak/hivemind',
-        open_prs: 'https://github.com/zyrak/hivemind/pulls',
-        agents_md: 'https://raw.githubusercontent.com/zyrak/hivemind/main/AGENTS.md',
+        repository: 'https://github.com/zyrakk/hivemind',
+        open_prs: 'https://github.com/zyrakk/hivemind/pulls',
+        agents_md: 'https://raw.githubusercontent.com/zyrakk/hivemind/main/AGENTS.md',
         active_branch: {
           name: 'feature/flux-economy',
-          url: 'https://github.com/zyrak/hivemind/tree/feature/flux-economy'
+          url: 'https://github.com/zyrakk/hivemind/tree/feature/flux-economy'
         }
       },
       contribute_now: [
@@ -272,12 +272,12 @@ export const mockProjectDetails = {
         ]
       },
       quick_links: {
-        repository: 'https://github.com/zyrak/hivemind',
-        open_prs: 'https://github.com/zyrak/hivemind/pulls?q=is%3Aopen+nhi-watch',
-        agents_md: 'https://raw.githubusercontent.com/zyrak/hivemind/main/agents/nhi-watch.md',
+        repository: 'https://github.com/zyrakk/hivemind',
+        open_prs: 'https://github.com/zyrakk/hivemind/pulls?q=is%3Aopen+nhi-watch',
+        agents_md: 'https://raw.githubusercontent.com/zyrakk/hivemind/main/agents/nhi-watch.md',
         active_branch: {
           name: 'feature/nhi-context-view',
-          url: 'https://github.com/zyrak/hivemind/tree/feature/nhi-context-view'
+          url: 'https://github.com/zyrakk/hivemind/tree/feature/nhi-context-view'
         }
       },
       contribute_now: [
@@ -355,12 +355,12 @@ export const mockProjectDetails = {
         pending: ['Aprobacion final y merge de PR']
       },
       quick_links: {
-        repository: 'https://github.com/zyrak/hivemind',
-        open_prs: 'https://github.com/zyrak/hivemind/pulls?q=is%3Aopen+zcloud',
-        agents_md: 'https://raw.githubusercontent.com/zyrak/hivemind/main/agents/zcloud.md',
+        repository: 'https://github.com/zyrakk/hivemind',
+        open_prs: 'https://github.com/zyrakk/hivemind/pulls?q=is%3Aopen+zcloud',
+        agents_md: 'https://raw.githubusercontent.com/zyrakk/hivemind/main/agents/zcloud.md',
         active_branch: {
           name: 'feature/zcloud-release-candidate',
-          url: 'https://github.com/zyrak/hivemind/tree/feature/zcloud-release-candidate'
+          url: 'https://github.com/zyrakk/hivemind/tree/feature/zcloud-release-candidate'
         }
       },
       contribute_now: [
@@ -422,12 +422,12 @@ export const mockProjectDetails = {
       ],
       last_session: null,
       quick_links: {
-        repository: 'https://github.com/zyrak/hivemind',
-        open_prs: 'https://github.com/zyrak/hivemind/pulls?q=is%3Aopen+vuln',
-        agents_md: 'https://raw.githubusercontent.com/zyrak/hivemind/main/agents/vuln-reporter.md',
+        repository: 'https://github.com/zyrakk/hivemind',
+        open_prs: 'https://github.com/zyrakk/hivemind/pulls?q=is%3Aopen+vuln',
+        agents_md: 'https://raw.githubusercontent.com/zyrakk/hivemind/main/agents/vuln-reporter.md',
         active_branch: {
           name: 'feature/vuln-cve-feed',
-          url: 'https://github.com/zyrak/hivemind/tree/feature/vuln-cve-feed'
+          url: 'https://github.com/zyrakk/hivemind/tree/feature/vuln-cve-feed'
         }
       },
       contribute_now: [

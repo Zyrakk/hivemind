@@ -3,7 +3,7 @@ package planner
 import (
 	"context"
 
-	"github.com/zyrak/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/llm"
 )
 
 type Service struct {

@@ -48,8 +48,8 @@ spec:
     spec:
       containers:
         - name: orchestrator
-          image: ghcr.io/zyrak/hivemind:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/zyrakk/hivemind:latest
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080

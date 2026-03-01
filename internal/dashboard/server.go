@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/zyrak/hivemind/internal/state"
+	"github.com/zyrakk/hivemind/internal/state"
 )
 
 type Config struct {

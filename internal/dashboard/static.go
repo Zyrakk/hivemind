@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	hivemindassets "github.com/zyrak/hivemind"
+	hivemindassets "github.com/zyrakk/hivemind"
 )
 
 func registerFrontendRoutes(mux *http.ServeMux, logger *slog.Logger) {
