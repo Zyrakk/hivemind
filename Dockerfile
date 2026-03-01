@@ -22,14 +22,25 @@ COPY --from=dashboard-builder /src/dashboard/dist ./dashboard/dist
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/orchestrator ./cmd/orchestrator
 
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-RUN adduser -D -g '' hivemind
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        nodejs \
+        npm \
+        tmux \
+    && npm install -g @openai/codex \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/* /root/.npm \
+    && mkdir -p /root/.codex
+
 WORKDIR /app
 
 COPY --from=builder /out/orchestrator /app/orchestrator
 COPY prompts /app/prompts
 
-USER hivemind
 EXPOSE 8080
 ENTRYPOINT ["/app/orchestrator"]

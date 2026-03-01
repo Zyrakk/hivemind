@@ -92,6 +92,10 @@ spec:
             - name: config
               mountPath: /config/config.yaml
               subPath: config.yaml
+            - name: codex-auth
+              mountPath: /root/.codex/auth.json
+              subPath: auth.json
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /health
@@ -122,6 +126,9 @@ spec:
         - name: config
           configMap:
             name: hivemind-config
+        - name: codex-auth
+          secret:
+            secretName: codex-auth
 ---
 apiVersion: v1
 kind: Service
