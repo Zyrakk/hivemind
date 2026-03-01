@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,10 +18,49 @@ import (
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
-	"github.com/zyrakk/hivemind/internal/notify"
 	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
+	"gopkg.in/yaml.v3"
 )
+
+type runtimeConfig struct {
+	GLM struct {
+		APIKeyEnv string `yaml:"api_key_env"`
+		Model     string `yaml:"model"`
+		BaseURL   string `yaml:"base_url"`
+		Timeout   string `yaml:"timeout"`
+	} `yaml:"glm"`
+	Consultants struct {
+		Claude struct {
+			Enabled             bool    `yaml:"enabled"`
+			APIKeyEnv           string  `yaml:"api_key_env"`
+			Model               string  `yaml:"model"`
+			MaxMonthlyBudgetUSD float64 `yaml:"max_monthly_budget_usd"`
+			MaxCallsPerDay      int     `yaml:"max_calls_per_day"`
+		} `yaml:"claude"`
+		Gemini struct {
+			Enabled        bool   `yaml:"enabled"`
+			APIKeyEnv      string `yaml:"api_key_env"`
+			Model          string `yaml:"model"`
+			MaxCallsPerDay int    `yaml:"max_calls_per_day"`
+		} `yaml:"gemini"`
+	} `yaml:"consultants"`
+	Codex struct {
+		ApprovalMode string `yaml:"approval_mode"`
+		TimeoutMins  int    `yaml:"timeout_minutes"`
+	} `yaml:"codex"`
+	Dashboard struct {
+		Port int    `yaml:"port"`
+		Host string `yaml:"host"`
+	} `yaml:"dashboard"`
+	Database struct {
+		Path string `yaml:"path"`
+	} `yaml:"database"`
+	Git struct {
+		DefaultRemote string `yaml:"default_remote"`
+		BranchPrefix  string `yaml:"branch_prefix"`
+	} `yaml:"git"`
+}
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -26,14 +68,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	databasePath := envOrDefault("DATABASE_PATH", "./hivemind.db")
 	configPath := envOrDefault("CONFIG_PATH", "./config.yaml")
-	telegramChatID := envInt64OrDefault("TELEGRAM_CHAT_ID", 0)
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		logger.Error("failed to load config", slog.Any("error", err), slog.String("config_path", configPath))
+		os.Exit(1)
+	}
 
-	zaiAPIKey := os.Getenv("ZAI_API_KEY")
-	anthropicAPIKey := os.Getenv("ANTHROPIC_API_KEY")
-	googleAIAPIKey := os.Getenv("GOOGLE_AI_API_KEY")
-	telegramBotToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	databasePath := envOrDefault("DATABASE_PATH", cfg.Database.Path)
+	if strings.TrimSpace(databasePath) == "" {
+		databasePath = "./hivemind.db"
+	}
 
 	store, err := state.New(databasePath)
 	if err != nil {
@@ -46,53 +91,288 @@ func main() {
 		}
 	}()
 
-	glmClient := llm.NewGLMClient(zaiAPIKey, "glm-4.7", "https://api.z.ai/v1")
-	plannerService := planner.New(glmClient, "")
-	evaluatorService := evaluator.New(glmClient, "")
-	launcherService := launcher.New("codex", 30*time.Minute)
-	telegramBot := notify.NewBot(telegramBotToken, telegramChatID)
+	glmAPIKey := os.Getenv(defaultEnvName(cfg.GLM.APIKeyEnv, "ZAI_API_KEY"))
+	glmTimeout := parseDurationOrDefault(cfg.GLM.Timeout, 60*time.Second)
+	glmClient := llm.NewGLMClient(llm.GLMConfig{
+		APIKey:  glmAPIKey,
+		Model:   cfg.GLM.Model,
+		BaseURL: cfg.GLM.BaseURL,
+		Timeout: glmTimeout,
+		Logger:  logger,
+	})
 
-	_ = plannerService
-	_ = evaluatorService
-	_ = launcherService
-	_ = telegramBot
-	_ = anthropicAPIKey
-	_ = googleAIAPIKey
-	_ = configPath
+	consultants := make([]llm.ConsultantClient, 0, 2)
 
-	cfg := dashboard.DefaultConfig()
-	cfg.Host = "0.0.0.0"
-	cfg.Port = 8080
-	cfg.Logger = logger
+	if cfg.Consultants.Claude.Enabled {
+		key := os.Getenv(defaultEnvName(cfg.Consultants.Claude.APIKeyEnv, "ANTHROPIC_API_KEY"))
+		if key != "" {
+			budget, budgetErr := llm.NewBudgetTracker(llm.BudgetConfig{
+				ConsultantName: "claude",
+				MaxMonthlyUSD:  cfg.Consultants.Claude.MaxMonthlyBudgetUSD,
+				MaxDailyCalls:  cfg.Consultants.Claude.MaxCallsPerDay,
+				DBPath:         databasePath,
+				Logger:         logger,
+			})
+			if budgetErr != nil {
+				logger.Error("failed to initialize claude budget tracker", slog.Any("error", budgetErr))
+			} else {
+				consultants = append(consultants, llm.NewClaudeClient(llm.ClaudeConfig{
+					APIKey:    key,
+					Model:     cfg.Consultants.Claude.Model,
+					PromptDir: "prompts",
+					Budget:    budget,
+					Logger:    logger,
+				}))
+			}
+		}
+	}
 
-	srv := dashboard.NewServer(store, cfg)
+	if cfg.Consultants.Gemini.Enabled {
+		key := os.Getenv(defaultEnvName(cfg.Consultants.Gemini.APIKeyEnv, "GOOGLE_AI_API_KEY"))
+		if key == "" {
+			key = os.Getenv("GEMINI_API_KEY")
+		}
+		if key != "" {
+			budget, budgetErr := llm.NewBudgetTracker(llm.BudgetConfig{
+				ConsultantName: "gemini",
+				MaxDailyCalls:  cfg.Consultants.Gemini.MaxCallsPerDay,
+				DBPath:         databasePath,
+				Logger:         logger,
+			})
+			if budgetErr != nil {
+				logger.Error("failed to initialize gemini budget tracker", slog.Any("error", budgetErr))
+			} else {
+				consultants = append(consultants, llm.NewGeminiClient(llm.GeminiConfig{
+					APIKey:    key,
+					Model:     cfg.Consultants.Gemini.Model,
+					PromptDir: "prompts",
+					Budget:    budget,
+					Logger:    logger,
+				}))
+			}
+		}
+	}
 
+	launcherService := launcher.NewWithStore(store, launcher.LauncherConfig{
+		CodexBinary:          envOrDefault("CODEX_BINARY", "codex"),
+		ApprovalMode:         cfg.Codex.ApprovalMode,
+		TimeoutMinutes:       cfg.Codex.TimeoutMins,
+		MaxConcurrentWorkers: 5,
+		WorkDir:              ".",
+		GitRemote:            cfg.Git.DefaultRemote,
+		BranchPrefix:         cfg.Git.BranchPrefix,
+		UseTmux:              true,
+		Logger:               logger,
+	})
+
+	plannerService := planner.New(glmClient, consultants, launcherService, store, "prompts", logger)
+	evaluatorService := evaluator.New(glmClient, consultants, launcherService, store, logger)
+	plannerService.SetEvaluator(evaluatorService)
+
+	dcfg := dashboard.DefaultConfig()
+	dcfg.Host = defaultString(cfg.Dashboard.Host, "0.0.0.0")
+	if cfg.Dashboard.Port > 0 {
+		dcfg.Port = cfg.Dashboard.Port
+	}
+	dcfg.Logger = logger
+	dashboardServer := dashboard.NewServer(store, dcfg)
+
+	serverErrCh := make(chan error, 1)
 	go func() {
-		<-ctx.Done()
-
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		if shutdownErr := srv.Shutdown(shutdownCtx); shutdownErr != nil {
-			logger.Error("dashboard shutdown failed", slog.Any("error", shutdownErr))
+		if serveErr := dashboardServer.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			serverErrCh <- serveErr
 		}
 	}()
 
-	logger.Info(
-		"dashboard server listening",
-		slog.String("addr", srv.Addr),
-		slog.String("database_path", databasePath),
+	logger.Info("hivemind orchestrator ready",
+		slog.String("dashboard_addr", dashboardServer.Addr),
 		slog.String("config_path", configPath),
-		slog.Bool("zai_api_key_set", zaiAPIKey != ""),
-		slog.Bool("anthropic_api_key_set", anthropicAPIKey != ""),
-		slog.Bool("google_ai_api_key_set", googleAIAPIKey != ""),
-		slog.Bool("telegram_bot_token_set", telegramBotToken != ""),
+		slog.Bool("glm_configured", glmAPIKey != ""),
+		slog.Int("consultants_enabled", len(consultants)),
 	)
 
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("dashboard server stopped with error", slog.Any("error", err))
-		os.Exit(1)
+	projectRef := envOrDefault("PROJECT_ID", "flux")
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		select {
+		case <-ctx.Done():
+			shutdownDashboard(logger, dashboardServer)
+			return
+		case serveErr := <-serverErrCh:
+			if serveErr != nil {
+				logger.Error("dashboard server failed", slog.Any("error", serveErr))
+			}
+			return
+		default:
+		}
+
+		fmt.Printf("\nDirective (%s) > ", projectRef)
+		if !scanner.Scan() {
+			shutdownDashboard(logger, dashboardServer)
+			return
+		}
+
+		directive := strings.TrimSpace(scanner.Text())
+		if directive == "" {
+			continue
+		}
+		if strings.EqualFold(directive, "exit") || strings.EqualFold(directive, "quit") {
+			shutdownDashboard(logger, dashboardServer)
+			return
+		}
+
+		planResult, planErr := plannerService.CreatePlan(ctx, directive, projectRef)
+		if planErr != nil {
+			logger.Error("create plan failed", slog.Any("error", planErr))
+			continue
+		}
+
+		printJSON("Plan", planResult.Plan)
+		if planResult.NeedsInput {
+			fmt.Println("Plan requires user input before execution:")
+			for _, q := range planResult.Plan.Questions {
+				fmt.Printf("- %s\n", q)
+			}
+			continue
+		}
+
+		fmt.Print("Execute plan? (y/n/edit): ")
+		if !scanner.Scan() {
+			shutdownDashboard(logger, dashboardServer)
+			return
+		}
+
+		choice := strings.ToLower(strings.TrimSpace(scanner.Text()))
+		if choice == "edit" {
+			fmt.Print("Provide additional guidance: ")
+			if !scanner.Scan() {
+				shutdownDashboard(logger, dashboardServer)
+				return
+			}
+			additional := strings.TrimSpace(scanner.Text())
+			if additional != "" {
+				directive = directive + "\n\nAdditional guidance:\n" + additional
+			}
+			planResult, planErr = plannerService.CreatePlan(ctx, directive, projectRef)
+			if planErr != nil {
+				logger.Error("create edited plan failed", slog.Any("error", planErr))
+				continue
+			}
+			printJSON("Edited Plan", planResult.Plan)
+			fmt.Print("Execute edited plan? (y/n): ")
+			if !scanner.Scan() {
+				shutdownDashboard(logger, dashboardServer)
+				return
+			}
+			choice = strings.ToLower(strings.TrimSpace(scanner.Text()))
+		}
+
+		if choice != "y" && choice != "yes" {
+			fmt.Println("Plan skipped.")
+			continue
+		}
+
+		if execErr := plannerService.ExecutePlan(ctx, planResult.PlanID); execErr != nil {
+			logger.Error("execute plan failed", slog.Any("error", execErr), slog.String("plan_id", planResult.PlanID))
+			continue
+		}
+
+		fmt.Println("Plan execution finished.")
 	}
+}
+
+func loadConfig(path string) (runtimeConfig, error) {
+	cfg := defaultRuntimeConfig()
+	if strings.TrimSpace(path) == "" {
+		return cfg, nil
+	}
+
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return cfg, nil
+		}
+		return runtimeConfig{}, err
+	}
+
+	if err := yaml.Unmarshal(payload, &cfg); err != nil {
+		return runtimeConfig{}, fmt.Errorf("parse yaml config: %w", err)
+	}
+
+	return cfg, nil
+}
+
+func defaultRuntimeConfig() runtimeConfig {
+	cfg := runtimeConfig{}
+	cfg.GLM.APIKeyEnv = "ZAI_API_KEY"
+	cfg.GLM.Model = "glm-4.7"
+	cfg.GLM.BaseURL = "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+	cfg.GLM.Timeout = "60s"
+
+	cfg.Codex.ApprovalMode = "full-auto"
+	cfg.Codex.TimeoutMins = 30
+
+	cfg.Dashboard.Host = "0.0.0.0"
+	cfg.Dashboard.Port = 8080
+
+	cfg.Database.Path = "./hivemind.db"
+	cfg.Git.DefaultRemote = "origin"
+	cfg.Git.BranchPrefix = "feature/"
+
+	cfg.Consultants.Claude.APIKeyEnv = "ANTHROPIC_API_KEY"
+	cfg.Consultants.Claude.Model = "claude-sonnet-4-5-20250929"
+	cfg.Consultants.Gemini.APIKeyEnv = "GOOGLE_AI_API_KEY"
+	cfg.Consultants.Gemini.Model = "gemini-2.5-flash"
+
+	return cfg
+}
+
+func parseDurationOrDefault(raw string, fallback time.Duration) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func defaultEnvName(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func shutdownDashboard(logger *slog.Logger, srv *http.Server) {
+	if srv == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("dashboard shutdown failed", slog.Any("error", err))
+	}
+}
+
+func printJSON(label string, payload any) {
+	encoded, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		fmt.Printf("%s: <failed to encode json: %v>\n", label, err)
+		return
+	}
+	fmt.Printf("%s:\n%s\n", label, string(encoded))
 }
 
 func envOrDefault(key, fallback string) string {
@@ -102,18 +382,4 @@ func envOrDefault(key, fallback string) string {
 	}
 
 	return value
-}
-
-func envInt64OrDefault(key string, fallback int64) int64 {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
-	}
-
-	parsed, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return fallback
-	}
-
-	return parsed
 }
