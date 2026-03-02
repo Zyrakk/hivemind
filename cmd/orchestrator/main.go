@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -22,6 +23,12 @@ import (
 	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	projectRoutingPrefixRE = regexp.MustCompile(`(?i)^\s*(?:proyecto|project)\s*:\s*(.+)$`)
+	directiveLabelPrefixRE = regexp.MustCompile(`(?i)^(?:directriz|directive)\s*:\s*`)
+	inlineDirectiveLabelRE = regexp.MustCompile(`(?i)\b(?:directriz|directive)\s*:`)
 )
 
 type runtimeConfig struct {
@@ -49,6 +56,7 @@ type runtimeConfig struct {
 	Codex struct {
 		ApprovalMode string `yaml:"approval_mode"`
 		TimeoutMins  int    `yaml:"timeout_minutes"`
+		ReposDir     string `yaml:"repos_dir"`
 	} `yaml:"codex"`
 	Dashboard struct {
 		Port int    `yaml:"port"`
@@ -159,6 +167,7 @@ func main() {
 		ApprovalMode:         cfg.Codex.ApprovalMode,
 		TimeoutMinutes:       cfg.Codex.TimeoutMins,
 		MaxConcurrentWorkers: 5,
+		ReposDir:             cfg.Codex.ReposDir,
 		WorkDir:              ".",
 		GitRemote:            cfg.Git.DefaultRemote,
 		BranchPrefix:         cfg.Git.BranchPrefix,
@@ -192,7 +201,8 @@ func main() {
 		slog.Int("consultants_enabled", len(consultants)),
 	)
 
-	projectRef := envOrDefault("PROJECT_ID", "flux")
+	defaultProjectRef := envOrDefault("PROJECT_ID", "flux")
+	promptProjectRef := ""
 	stdinIsTTY, statErr := isStdinTTY()
 	if statErr != nil {
 		logger.Warn("failed to inspect stdin; disabling interactive cli", slog.Any("error", statErr))
@@ -225,13 +235,47 @@ func main() {
 		default:
 		}
 
-		fmt.Printf("\nDirective (%s) > ", projectRef)
+		promptLabel := fmt.Sprintf("default: %s", defaultProjectRef)
+		if promptProjectRef != "" {
+			promptLabel = promptProjectRef
+		}
+		fmt.Printf("\nDirective (%s) > ", promptLabel)
 		if !scanner.Scan() {
 			shutdownDashboard(logger, dashboardServer)
 			return
 		}
 
-		directive := strings.TrimSpace(scanner.Text())
+		rawDirective := strings.TrimSpace(scanner.Text())
+		directive := rawDirective
+		projectRef := defaultProjectRef
+		promptProjectRef = ""
+
+		if parsedDirective, parsedProjectRef, hasProjectRouting := parseDirectiveRouting(rawDirective); hasProjectRouting {
+			parsedProjectRef = strings.TrimSpace(parsedProjectRef)
+			if parsedProjectRef == "" {
+				fmt.Printf("proyecto '%s' no encontrado\n", parsedProjectRef)
+				continue
+			}
+
+			project, resolveErr := store.GetProjectByReference(ctx, parsedProjectRef)
+			if resolveErr != nil {
+				if errors.Is(resolveErr, state.ErrNotFound) {
+					fmt.Printf("proyecto '%s' no encontrado\n", parsedProjectRef)
+				} else {
+					logger.Error("resolve project failed", slog.Any("error", resolveErr), slog.String("project_ref", parsedProjectRef))
+				}
+				continue
+			}
+
+			projectRef = strings.TrimSpace(project.Name)
+			if projectRef == "" {
+				projectRef = parsedProjectRef
+			}
+			promptProjectRef = projectRef
+			directive = parsedDirective
+		}
+
+		directive = strings.TrimSpace(directive)
 		if directive == "" {
 			continue
 		}
@@ -321,6 +365,40 @@ func loadConfig(path string) (runtimeConfig, error) {
 	return cfg, nil
 }
 
+func parseDirectiveRouting(rawDirective string) (directive string, projectRef string, hasProjectRouting bool) {
+	trimmed := strings.TrimSpace(rawDirective)
+	matches := projectRoutingPrefixRE.FindStringSubmatch(trimmed)
+	if len(matches) != 2 {
+		return trimmed, "", false
+	}
+
+	rest := strings.TrimSpace(matches[1])
+	if rest == "" {
+		return "", "", true
+	}
+
+	splitAt := len(rest)
+	if idx := strings.Index(rest, "."); idx >= 0 && idx < splitAt {
+		splitAt = idx
+	}
+	if idx := strings.IndexAny(rest, "\n\r"); idx >= 0 && idx < splitAt {
+		splitAt = idx
+	}
+	if loc := inlineDirectiveLabelRE.FindStringIndex(rest); loc != nil && loc[0] >= 0 && loc[0] < splitAt {
+		splitAt = loc[0]
+	}
+
+	projectRef = strings.TrimSpace(rest[:splitAt])
+	remainder := ""
+	if splitAt < len(rest) {
+		remainder = strings.TrimSpace(rest[splitAt:])
+	}
+	remainder = strings.TrimLeft(remainder, ". \t\r\n")
+	remainder = strings.TrimSpace(directiveLabelPrefixRE.ReplaceAllString(remainder, ""))
+
+	return remainder, projectRef, true
+}
+
 func defaultRuntimeConfig() runtimeConfig {
 	cfg := runtimeConfig{}
 	cfg.GLM.APIKeyEnv = "ZAI_API_KEY"
@@ -330,6 +408,7 @@ func defaultRuntimeConfig() runtimeConfig {
 
 	cfg.Codex.ApprovalMode = "full-auto"
 	cfg.Codex.TimeoutMins = 30
+	cfg.Codex.ReposDir = "/home/stefan/Github_Repos"
 
 	cfg.Dashboard.Host = "0.0.0.0"
 	cfg.Dashboard.Port = 8080
