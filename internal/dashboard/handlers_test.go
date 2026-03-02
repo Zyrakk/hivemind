@@ -127,6 +127,9 @@ func TestDashboardEndpointsEndToEnd(t *testing.T) {
 	if projects[0].Status != state.ProjectStatusPendingReview {
 		t.Fatalf("expected project status %q, got %q", state.ProjectStatusPendingReview, projects[0].Status)
 	}
+	if projects[0].RepoURL != "https://example.com/flux" {
+		t.Fatalf("expected project repo_url %q, got %q", "https://example.com/flux", projects[0].RepoURL)
+	}
 
 	resp, body = mustRequestJSON(t, server, http.MethodGet, "/api/project/flux", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -140,6 +143,9 @@ func TestDashboardEndpointsEndToEnd(t *testing.T) {
 	}
 	if detail.Project.Status != state.ProjectStatusPendingReview {
 		t.Fatalf("expected detail project status %q, got %q", state.ProjectStatusPendingReview, detail.Project.Status)
+	}
+	if detail.Project.RepoURL != "https://example.com/flux" {
+		t.Fatalf("expected detail project repo_url %q, got %q", "https://example.com/flux", detail.Project.RepoURL)
 	}
 	if len(detail.Tasks) != 1 {
 		t.Fatalf("expected 1 task, got %d", len(detail.Tasks))

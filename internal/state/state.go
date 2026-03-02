@@ -94,6 +94,7 @@ type ProjectSummary struct {
 	InternalID    int64
 	Name          string
 	Status        string
+	RepoURL       string
 	ActiveWorkers int
 	PendingTasks  int
 	LastActivity  *time.Time
@@ -530,6 +531,7 @@ func (s *Store) ListProjectSummaries(ctx context.Context) ([]ProjectSummary, err
 		    p.id,
 		    p.name,
 		    p.status,
+		    p.repo_url,
 		    (SELECT COUNT(1) FROM workers w WHERE w.project_id = p.id AND w.status = ?) AS active_workers,
 		    (SELECT COUNT(1) FROM tasks t WHERE t.project_id = p.id AND t.status = ?) AS pending_tasks,
 		    COALESCE((SELECT MAX(e.timestamp) FROM events e WHERE e.project_id = p.id), p.updated_at) AS last_activity
@@ -554,6 +556,7 @@ func (s *Store) ListProjectSummaries(ctx context.Context) ([]ProjectSummary, err
 			&summary.InternalID,
 			&summary.Name,
 			&summary.Status,
+			&summary.RepoURL,
 			&summary.ActiveWorkers,
 			&summary.PendingTasks,
 			&lastActivityRaw,

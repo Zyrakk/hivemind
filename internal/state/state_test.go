@@ -24,8 +24,9 @@ func TestStoreCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	projectID, err := store.CreateProject(ctx, Project{
-		Name:   "flux",
-		Status: ProjectStatusWorking,
+		Name:    "flux",
+		Status:  ProjectStatusWorking,
+		RepoURL: "https://example.com/flux",
 	})
 	if err != nil {
 		t.Fatalf("CreateProject() failed: %v", err)
@@ -78,6 +79,9 @@ func TestStoreCRUD(t *testing.T) {
 
 	if len(global.Projects) != 1 {
 		t.Fatalf("expected 1 project, got %d", len(global.Projects))
+	}
+	if global.Projects[0].RepoURL != "https://example.com/flux" {
+		t.Fatalf("expected project repo_url %q, got %q", "https://example.com/flux", global.Projects[0].RepoURL)
 	}
 	if len(global.ActiveWorkers) != 1 {
 		t.Fatalf("expected 1 active worker, got %d", len(global.ActiveWorkers))

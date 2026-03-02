@@ -80,6 +80,7 @@ type projectSummaryResponse struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
 	Status        string     `json:"status"`
+	RepoURL       string     `json:"repo_url,omitempty"`
 	ActiveWorkers int        `json:"active_workers"`
 	PendingTasks  int        `json:"pending_tasks"`
 	LastActivity  *time.Time `json:"last_activity,omitempty"`
@@ -313,6 +314,7 @@ func (h *Server) handleGetProjects(w http.ResponseWriter, r *http.Request) {
 			ID:            project.ID,
 			Name:          project.Name,
 			Status:        project.Status,
+			RepoURL:       project.RepoURL,
 			ActiveWorkers: project.ActiveWorkers,
 			PendingTasks:  project.PendingTasks,
 			LastActivity:  project.LastActivity,
