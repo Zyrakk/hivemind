@@ -192,6 +192,23 @@ func main() {
 	)
 
 	projectRef := envOrDefault("PROJECT_ID", "flux")
+	stdinIsTTY, statErr := isStdinTTY()
+	if statErr != nil {
+		logger.Warn("failed to inspect stdin; disabling interactive cli", slog.Any("error", statErr))
+	}
+	if !stdinIsTTY {
+		logger.Info("stdin is not a tty; interactive cli disabled")
+		select {
+		case <-ctx.Done():
+		case serveErr := <-serverErrCh:
+			if serveErr != nil {
+				logger.Error("dashboard server failed", slog.Any("error", serveErr))
+			}
+		}
+		shutdownDashboard(logger, dashboardServer)
+		return
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
@@ -352,6 +369,15 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func isStdinTTY() (bool, error) {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	return (info.Mode() & os.ModeCharDevice) != 0, nil
 }
 
 func shutdownDashboard(logger *slog.Logger, srv *http.Server) {
