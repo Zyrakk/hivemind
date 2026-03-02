@@ -24,3 +24,7 @@ sessions/cache/*.md
 .gocache-build/
 .gocache-vet/
 dashboard/node_modules/
+config.yaml
+config.yaml.save
+sessions/cache/*.log
+sessions/cache/*.code
