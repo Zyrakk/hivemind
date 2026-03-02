@@ -53,6 +53,8 @@ type WorkerProcess struct {
 	Status      string
 	PID         int
 	StartedAt   time.Time
+	WorkerDir   string
+	RepoDir     string
 	ContextFile string
 	Task        Task
 	WorkerID    int64
@@ -72,6 +74,8 @@ type LauncherConfig struct {
 	ApprovalMode         string
 	TimeoutMinutes       int
 	MaxConcurrentWorkers int
+	WorkersDir           string
+	ReposDir             string
 	WorkDir              string
 	GitRemote            string
 	BranchPrefix         string
@@ -124,6 +128,12 @@ func NewWithStore(db *state.Store, config LauncherConfig) *Launcher {
 	}
 	if strings.TrimSpace(config.WorkDir) == "" {
 		config.WorkDir = "."
+	}
+	if strings.TrimSpace(config.WorkersDir) == "" {
+		config.WorkersDir = "/tmp/hivemind-workers"
+	}
+	if strings.TrimSpace(config.ReposDir) == "" {
+		config.ReposDir = config.WorkDir
 	}
 	if strings.TrimSpace(config.GitRemote) == "" {
 		config.GitRemote = "origin"
@@ -194,24 +204,25 @@ func (l *Launcher) LaunchWorker(ctx context.Context, task Task, agentsMD string,
 		l.mu.Unlock()
 	}
 
-	if err := l.prepareBranch(ctx, branch); err != nil {
+	workerDir, projectRepoDir, err := l.prepareWorkerRepo(ctx, task, sessionID, branch)
+	if err != nil {
 		cleanupPlaceholder()
 		return nil, err
 	}
 
 	taskDescription := renderTaskDescription(task)
 	contextText := BuildWorkerContext(agentsMD, taskDescription, cache, sessionID)
-	contextFile, err := l.writeContextFile(sessionID, contextText)
+	contextFile, err := l.writePromptFile(workerDir, contextText)
 	if err != nil {
 		cleanupPlaceholder()
 		return nil, err
 	}
 
-	stdoutFile := filepath.Join(l.config.WorkDir, "sessions", "cache", sessionID+"-stdout.log")
-	stderrFile := filepath.Join(l.config.WorkDir, "sessions", "cache", sessionID+"-stderr.log")
-	exitFile := filepath.Join(l.config.WorkDir, "sessions", "cache", sessionID+"-exit.code")
+	stdoutFile := filepath.Join(workerDir, "stdout.log")
+	stderrFile := filepath.Join(workerDir, "stderr.log")
+	exitFile := filepath.Join(workerDir, "exit.code")
 
-	worker, err := l.startWorkerProcess(ctx, placeholder, contextFile, task.Description, stdoutFile, stderrFile, exitFile)
+	worker, err := l.startWorkerProcess(ctx, placeholder, workerDir, projectRepoDir, contextFile, contextText, stdoutFile, stderrFile, exitFile)
 	if err != nil {
 		cleanupPlaceholder()
 		return nil, err
@@ -275,6 +286,8 @@ func (l *Launcher) GetActiveWorkers() []WorkerProcess {
 			Status:      worker.Status,
 			PID:         worker.PID,
 			StartedAt:   worker.StartedAt,
+			WorkerDir:   worker.WorkerDir,
+			RepoDir:     worker.RepoDir,
 			ContextFile: worker.ContextFile,
 			Task:        worker.Task,
 			WorkerID:    worker.WorkerID,
@@ -315,48 +328,53 @@ func (l *Launcher) GetWorkDir() string {
 	return l.config.WorkDir
 }
 
-func (l *Launcher) prepareBranch(ctx context.Context, branch string) error {
-	if _, err := l.runCommand(ctx, l.config.GitBinary, "-C", l.config.WorkDir, "checkout", "main"); err != nil {
-		return fmt.Errorf("git checkout main: %w", err)
+func (l *Launcher) prepareWorkerRepo(ctx context.Context, task Task, sessionID, branch string) (string, string, error) {
+	repoURL, err := l.resolveProjectRepoURL(ctx, task)
+	if err != nil {
+		return "", "", err
 	}
 
-	if !l.config.DisableGitPull {
-		if _, err := l.runCommand(ctx, l.config.GitBinary, "-C", l.config.WorkDir, "pull", l.config.GitRemote, "main"); err != nil {
-			return fmt.Errorf("git pull %s main: %w", l.config.GitRemote, err)
-		}
+	workerDir := filepath.Join(l.config.WorkersDir, sessionID)
+	if err := os.MkdirAll(workerDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("create worker dir %q: %w", workerDir, err)
 	}
 
-	if _, err := l.runCommand(ctx, l.config.GitBinary, "-C", l.config.WorkDir, "checkout", "-b", branch); err != nil {
-		return fmt.Errorf("git checkout -b %s: %w", branch, err)
+	repoDir := filepath.Join(workerDir, "repo")
+	if _, err := l.runCommand(ctx, l.config.GitBinary, "clone", repoURL, repoDir); err != nil {
+		return "", "", fmt.Errorf("git clone %q: %w", repoURL, err)
+	}
+	if _, err := l.runCommand(ctx, l.config.GitBinary, "-C", repoDir, "checkout", "-b", branch); err != nil {
+		return "", "", fmt.Errorf("git checkout -b %s: %w", branch, err)
 	}
 
-	return nil
+	return workerDir, repoDir, nil
 }
 
-func (l *Launcher) writeContextFile(sessionID, contextText string) (string, error) {
-	cacheDir := filepath.Join(l.config.WorkDir, "sessions", "cache")
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return "", fmt.Errorf("create sessions/cache: %w", err)
+func (l *Launcher) writePromptFile(workerDir, promptText string) (string, error) {
+	if strings.TrimSpace(workerDir) == "" {
+		return "", fmt.Errorf("worker dir is required")
 	}
-
-	contextFile := filepath.Join(cacheDir, sessionID+"-context.md")
-	if err := os.WriteFile(contextFile, []byte(contextText), 0o644); err != nil {
-		return "", fmt.Errorf("write context file: %w", err)
+	promptFile := filepath.Join(workerDir, "prompt.txt")
+	if err := os.WriteFile(promptFile, []byte(promptText), 0o644); err != nil {
+		return "", fmt.Errorf("write prompt file: %w", err)
 	}
-
-	return contextFile, nil
+	return promptFile, nil
 }
 
 func (l *Launcher) startWorkerProcess(
 	ctx context.Context,
 	baseWorker *WorkerProcess,
+	workerDir string,
+	repoDir string,
 	contextFile string,
-	taskDescription string,
+	promptText string,
 	stdoutFile string,
 	stderrFile string,
 	exitFile string,
 ) (*WorkerProcess, error) {
 	worker := *baseWorker
+	worker.WorkerDir = workerDir
+	worker.RepoDir = repoDir
 	worker.ContextFile = contextFile
 	worker.stdoutFile = stdoutFile
 	worker.stderrFile = stderrFile
@@ -375,7 +393,7 @@ func (l *Launcher) startWorkerProcess(
 	defer stderr.Close()
 
 	if l.config.UseTmux {
-		cmdLine := l.buildTmuxCommand(taskDescription, contextFile, stdoutFile, stderrFile, exitFile)
+		cmdLine := l.buildTmuxCommand(repoDir, contextFile, stdoutFile, stderrFile, exitFile)
 		if _, err := l.runCommand(ctx, l.config.TmuxBinary, "new-session", "-d", "-s", worker.SessionID, cmdLine); err != nil {
 			return nil, fmt.Errorf("tmux new-session: %w", err)
 		}
@@ -384,13 +402,9 @@ func (l *Launcher) startWorkerProcess(
 		return &worker, nil
 	}
 
-	args := []string{
-		"--approval-mode", l.config.ApprovalMode,
-		"--context", contextFile,
-		taskDescription,
-	}
+	args := l.buildCodexArgs(repoDir, promptText)
 	cmd := exec.CommandContext(ctx, l.config.CodexBinary, args...)
-	cmd.Dir = l.config.WorkDir
+	cmd.Dir = repoDir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -420,26 +434,45 @@ func (l *Launcher) startWorkerProcess(
 	return &worker, nil
 }
 
-func (l *Launcher) buildTmuxCommand(taskDescription, contextFile, stdoutFile, stderrFile, exitFile string) string {
-	args := []string{
-		l.config.CodexBinary,
-		"--approval-mode", l.config.ApprovalMode,
-		"--context", contextFile,
-		taskDescription,
-	}
-
-	quotedArgs := make([]string, 0, len(args))
-	for _, arg := range args {
-		quotedArgs = append(quotedArgs, shellQuote(arg))
-	}
-
+func (l *Launcher) buildTmuxCommand(repoDir, promptFile, stdoutFile, stderrFile, exitFile string) string {
 	return fmt.Sprintf(
-		"%s > %s 2> %s; CODE=$?; echo $CODE > %s",
-		strings.Join(quotedArgs, " "),
+		"%s exec --full-auto -C %s -- \"$(cat %s)\" > %s 2> %s; CODE=$?; echo $CODE > %s",
+		shellQuote(l.config.CodexBinary),
+		shellQuote(repoDir),
+		shellQuote(promptFile),
 		shellQuote(stdoutFile),
 		shellQuote(stderrFile),
 		shellQuote(exitFile),
 	)
+}
+
+func (l *Launcher) buildCodexArgs(repoDir, promptText string) []string {
+	return []string{
+		"exec",
+		"--full-auto",
+		"-C", repoDir,
+		"--",
+		promptText,
+	}
+}
+
+func (l *Launcher) resolveProjectRepoURL(ctx context.Context, task Task) (string, error) {
+	if task.ProjectID <= 0 {
+		return "", fmt.Errorf("project id is required to resolve repo_url")
+	}
+	if l.db == nil {
+		return "", fmt.Errorf("state store is required to resolve repo_url")
+	}
+
+	project, err := l.db.GetProjectByID(ctx, task.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("resolve project %d: %w", task.ProjectID, err)
+	}
+	repoURL := strings.TrimSpace(project.RepoURL)
+	if repoURL == "" {
+		return "", fmt.Errorf("project %d has empty repo_url", task.ProjectID)
+	}
+	return repoURL, nil
 }
 
 func (l *Launcher) runCommand(ctx context.Context, command string, args ...string) ([]byte, error) {

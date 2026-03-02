@@ -210,7 +210,45 @@ func (l *Launcher) finalizeWorker(worker *WorkerProcess) {
 		}
 	}
 
-	diff := strings.TrimSpace(l.collectWorkerDiff(worker.Branch))
+	diff := strings.TrimSpace(l.collectWorkerDiff(worker.RepoDir, worker.Branch))
+	if status == state.WorkerStatusCompleted {
+		if pushErr := l.pushWorkerBranch(context.Background(), worker.RepoDir, worker.Branch); pushErr != nil {
+			l.logger.Error(
+				"git push failed; preserving worker directory",
+				slog.String("session_id", worker.SessionID),
+				slog.String("branch", worker.Branch),
+				slog.String("worker_dir", worker.WorkerDir),
+				slogAnyErr(pushErr),
+			)
+			status = state.WorkerStatusFailed
+			errorMessage = fmt.Sprintf("git push branch %s failed: %v", worker.Branch, pushErr)
+
+			if strings.TrimSpace(worker.WorkerDir) != "" {
+				l.logger.Error(
+					fmt.Sprintf("worker directory preserved at %s for manual recovery", worker.WorkerDir),
+					slog.String("session_id", worker.SessionID),
+					slog.String("worker_dir", worker.WorkerDir),
+				)
+			}
+		} else {
+			if strings.TrimSpace(worker.WorkerDir) != "" {
+				if cleanupErr := os.RemoveAll(worker.WorkerDir); cleanupErr != nil {
+					l.logger.Warn(
+						"cleanup worker directory failed",
+						slog.String("session_id", worker.SessionID),
+						slog.String("worker_dir", worker.WorkerDir),
+						slogAnyErr(cleanupErr),
+					)
+				} else {
+					l.logger.Info(
+						"worker directory cleaned successfully",
+						slog.String("session_id", worker.SessionID),
+						slog.String("worker_dir", worker.WorkerDir),
+					)
+				}
+			}
+		}
+	}
 	finishedAt := l.nowFn().UTC()
 
 	session := Session{
@@ -233,10 +271,28 @@ func (l *Launcher) finalizeWorker(worker *WorkerProcess) {
 	l.completed[worker.SessionID] = session
 	l.mu.Unlock()
 
+	l.notifyWorkerFinished(session)
+}
+
+func (l *Launcher) notifyWorkerFinished(session Session) {
+	if session.Status == state.WorkerStatusCompleted {
+		l.logger.Info(
+			"worker completed, triggering evaluation",
+			slog.String("session_id", session.SessionID),
+			slog.String("branch", session.Branch),
+		)
+	}
+
 	select {
 	case l.finishedCh <- session:
 	default:
-		l.logger.Warn("worker result channel full", slog.String("session_id", worker.SessionID))
+		l.logger.Warn(
+			"worker result channel full; dispatching completion asynchronously",
+			slog.String("session_id", session.SessionID),
+		)
+		go func(s Session) {
+			l.finishedCh <- s
+		}(session)
 	}
 }
 
@@ -269,17 +325,20 @@ func (l *Launcher) resolveWorkerExitCode(worker *WorkerProcess) int {
 	}
 }
 
-func (l *Launcher) collectWorkerDiff(branch string) string {
+func (l *Launcher) collectWorkerDiff(repoDir, branch string) string {
 	if strings.TrimSpace(branch) == "" {
 		return ""
 	}
+	if strings.TrimSpace(repoDir) == "" {
+		repoDir = l.config.WorkDir
+	}
 
-	output, err := l.runCommand(context.Background(), l.config.GitBinary, "-C", l.config.WorkDir, "diff", "main..."+branch)
+	output, err := l.runCommand(context.Background(), l.config.GitBinary, "-C", repoDir, "diff", "main..."+branch)
 	if err == nil && strings.TrimSpace(string(output)) != "" {
 		return string(output)
 	}
 
-	fallback, fallbackErr := l.runCommand(context.Background(), l.config.GitBinary, "-C", l.config.WorkDir, "diff")
+	fallback, fallbackErr := l.runCommand(context.Background(), l.config.GitBinary, "-C", repoDir, "diff")
 	if fallbackErr == nil && strings.TrimSpace(string(fallback)) != "" {
 		return string(fallback)
 	}
@@ -288,6 +347,22 @@ func (l *Launcher) collectWorkerDiff(branch string) string {
 		l.logger.Warn("collect worker diff failed", slog.String("branch", branch), slogAnyErr(err), slogAnyErr(fallbackErr))
 	}
 	return ""
+}
+
+func (l *Launcher) pushWorkerBranch(ctx context.Context, repoDir, branch string) error {
+	if strings.TrimSpace(repoDir) == "" {
+		return fmt.Errorf("repo directory is required")
+	}
+	if strings.TrimSpace(branch) == "" {
+		return fmt.Errorf("branch is required")
+	}
+
+	_, err := l.runCommand(ctx, l.config.GitBinary, "-C", repoDir, "push", l.config.GitRemote, branch)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (l *Launcher) updateWorkerStatus(ctx context.Context, worker *WorkerProcess, status string, errorMessage string) {

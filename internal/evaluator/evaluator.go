@@ -226,21 +226,36 @@ func (e *Evaluator) HandleWorkerCompletion(ctx context.Context, sessionID string
 }
 
 func (e *Evaluator) HandleWorkerCompletionDetailed(ctx context.Context, sessionID string) (*CompletionResult, error) {
-	if e == nil || e.launcher == nil {
-		return nil, fmt.Errorf("evaluator launcher is not configured")
+	if e == nil {
+		return nil, fmt.Errorf("evaluator is nil")
 	}
+	if e.launcher == nil {
+		reason := "evaluator launcher is not configured"
+		e.logger.Warn("evaluation skipped: "+reason, slog.String("session_id", sessionID))
+		return nil, fmt.Errorf(reason)
+	}
+
+	e.logger.Info(
+		fmt.Sprintf("evaluating worker output for session %s", sessionID),
+		slog.String("session_id", sessionID),
+	)
 
 	session, ok := e.launcher.GetSession(sessionID)
 	if !ok {
-		return nil, fmt.Errorf("session %s not found", sessionID)
+		reason := fmt.Sprintf("session %s not found", sessionID)
+		e.logger.Warn("evaluation skipped: "+reason, slog.String("session_id", sessionID))
+		return nil, fmt.Errorf(reason)
 	}
 
 	if session.Status == state.WorkerStatusCompleted {
 		evalResult, err := e.EvaluateWorkerOutput(ctx, session)
 		if err != nil {
+			e.logger.Warn("evaluation skipped: "+err.Error(), slog.String("session_id", sessionID))
 			return nil, err
 		}
 		if evalResult == nil {
+			reason := "evaluate worker output returned nil result"
+			e.logger.Warn("evaluation skipped: "+reason, slog.String("session_id", sessionID))
 			return &CompletionResult{Action: "escalate"}, nil
 		}
 		return &CompletionResult{

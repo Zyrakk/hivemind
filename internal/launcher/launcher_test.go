@@ -43,17 +43,21 @@ func TestLaunchWorkerAndMonitorCompletion(t *testing.T) {
 	t.Setenv("MOCK_CODEX_EXIT", "0")
 
 	workDir := t.TempDir()
-	initGitRepo(t, workDir)
-
+	projectName := "test-project"
+	repoURL := setupRemoteRepository(t, workDir, projectName)
+	runLogPath := filepath.Join(workDir, "mock-codex-run.log")
+	t.Setenv("MOCK_CODEX_RUN_LOG", runLogPath)
 	mockCodex := writeMockCodex(t, workDir)
-	store, projectID := newTestStore(t)
+	store, projectID := newTestStore(t, projectName, repoURL)
 	defer func() { _ = store.Close() }()
+	workersDir := filepath.Join(workDir, "workers")
 
 	launcher := NewWithStore(store, LauncherConfig{
 		CodexBinary:          mockCodex,
 		ApprovalMode:         "full-auto",
 		MaxConcurrentWorkers: 5,
 		WorkDir:              workDir,
+		WorkersDir:           workersDir,
 		BranchPrefix:         "feature/",
 		PollInterval:         20 * time.Millisecond,
 		DisableGitPull:       true,
@@ -88,15 +92,34 @@ func TestLaunchWorkerAndMonitorCompletion(t *testing.T) {
 		t.Fatalf("expected non-empty git diff")
 	}
 
-	contextPath := filepath.Join(workDir, "sessions", "cache", session.SessionID+"-context.md")
-	if _, err := os.Stat(contextPath); err != nil {
-		t.Fatalf("expected context file at %s: %v", contextPath, err)
+	runLogRaw, err := os.ReadFile(runLogPath)
+	if err != nil {
+		t.Fatalf("expected mock codex run log at %s: %v", runLogPath, err)
+	}
+	runLog := string(runLogRaw)
+	if !strings.Contains(runLog, "mode=--full-auto") {
+		t.Fatalf("expected --full-auto in mock run log, got: %s", runLog)
+	}
+	if !strings.Contains(runLog, "cd="+filepath.Join(workersDir, session.SessionID, "repo")) {
+		t.Fatalf("expected -C repo path in mock run log, got: %s", runLog)
+	}
+	if !strings.Contains(runLog, "Contexto de Trabajo") {
+		t.Fatalf("expected full context in prompt, got: %s", runLog)
+	}
+
+	workerDirPath := filepath.Join(workersDir, session.SessionID)
+	if _, err := os.Stat(workerDirPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected worker dir cleanup for successful run, stat err=%v", err)
 	}
 
 	active := launcher.GetActiveWorkers()
 	if len(active) != 0 {
 		t.Fatalf("expected no active workers, got %d", len(active))
 	}
+
+	verifyClone := filepath.Join(workDir, "verify")
+	runCmd(t, workDir, "git", "clone", repoURL, verifyClone)
+	runCmd(t, verifyClone, "git", "checkout", session.Branch)
 
 	detail, err := store.GetProjectDetail(context.Background(), strconv.FormatInt(projectID, 10))
 	if err != nil {
@@ -115,13 +138,17 @@ func TestMonitorTimeoutKillsWorker(t *testing.T) {
 	t.Setenv("MOCK_CODEX_EXIT", "0")
 
 	workDir := t.TempDir()
-	initGitRepo(t, workDir)
+	projectName := "timeout-project"
+	repoURL := setupRemoteRepository(t, workDir, projectName)
 	mockCodex := writeMockCodex(t, workDir)
+	store, projectID := newTestStore(t, projectName, repoURL)
+	defer func() { _ = store.Close() }()
 
-	launcher := NewWithStore(nil, LauncherConfig{
+	launcher := NewWithStore(store, LauncherConfig{
 		CodexBinary:          mockCodex,
 		MaxConcurrentWorkers: 1,
 		WorkDir:              workDir,
+		WorkersDir:           filepath.Join(workDir, "workers"),
 		BranchPrefix:         "feature/",
 		PollInterval:         20 * time.Millisecond,
 		Timeout:              150 * time.Millisecond,
@@ -130,6 +157,7 @@ func TestMonitorTimeoutKillsWorker(t *testing.T) {
 	})
 
 	session, err := launcher.LaunchWorker(context.Background(), Task{
+		ProjectID:   projectID,
 		Description: "Long running task",
 		BranchName:  "timeout-worker",
 	}, "# AGENTS", "")
@@ -151,13 +179,17 @@ func TestLaunchWorkerRespectsMaxConcurrentWorkers(t *testing.T) {
 	t.Setenv("MOCK_CODEX_EXIT", "0")
 
 	workDir := t.TempDir()
-	initGitRepo(t, workDir)
+	projectName := "concurrency-project"
+	repoURL := setupRemoteRepository(t, workDir, projectName)
 	mockCodex := writeMockCodex(t, workDir)
+	store, projectID := newTestStore(t, projectName, repoURL)
+	defer func() { _ = store.Close() }()
 
-	launcher := NewWithStore(nil, LauncherConfig{
+	launcher := NewWithStore(store, LauncherConfig{
 		CodexBinary:          mockCodex,
 		MaxConcurrentWorkers: 1,
 		WorkDir:              workDir,
+		WorkersDir:           filepath.Join(workDir, "workers"),
 		BranchPrefix:         "feature/",
 		PollInterval:         20 * time.Millisecond,
 		Timeout:              2 * time.Second,
@@ -166,6 +198,7 @@ func TestLaunchWorkerRespectsMaxConcurrentWorkers(t *testing.T) {
 	})
 
 	first, err := launcher.LaunchWorker(context.Background(), Task{
+		ProjectID:   projectID,
 		Description: "First worker",
 		BranchName:  "first-worker",
 	}, "# AGENTS", "")
@@ -174,6 +207,7 @@ func TestLaunchWorkerRespectsMaxConcurrentWorkers(t *testing.T) {
 	}
 
 	_, err = launcher.LaunchWorker(context.Background(), Task{
+		ProjectID:   projectID,
 		Description: "Second worker",
 		BranchName:  "second-worker",
 	}, "# AGENTS", "")
@@ -191,28 +225,33 @@ func writeMockCodex(t *testing.T, dir string) string {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 
-context_file=""
+mode=""
+project_dir=""
+prompt=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --approval-mode)
-      shift 2
+    --full-auto)
+      mode="$1"
+      shift
       ;;
-    --context)
-      context_file="$2"
+    -C|--cd)
+      project_dir="$2"
       shift 2
       ;;
     *)
-      task_desc="$1"
+      prompt="$1"
       shift
       ;;
   esac
 done
 
-if [[ -n "$context_file" ]]; then
-  echo "context=$context_file" > .mock-codex-run.log
-fi
-if [[ -n "${task_desc:-}" ]]; then
-  echo "task=$task_desc" >> .mock-codex-run.log
+echo "mode=$mode" > .mock-codex-run.log
+echo "cd=$project_dir" >> .mock-codex-run.log
+echo "prompt=$prompt" >> .mock-codex-run.log
+if [[ -n "${MOCK_CODEX_RUN_LOG:-}" ]]; then
+  echo "mode=$mode" > "${MOCK_CODEX_RUN_LOG}"
+  echo "cd=$project_dir" >> "${MOCK_CODEX_RUN_LOG}"
+  echo "prompt=$prompt" >> "${MOCK_CODEX_RUN_LOG}"
 fi
 
 echo "worker-change" >> README.md
@@ -224,6 +263,38 @@ exit "${MOCK_CODEX_EXIT:-0}"
 	}
 
 	return path
+}
+
+func TestBuildTmuxCommandUsesCurrentCodexSyntax(t *testing.T) {
+	launcher := NewWithStore(nil, LauncherConfig{
+		CodexBinary: "codex",
+		WorkDir:     t.TempDir(),
+		WorkersDir:  t.TempDir(),
+	})
+
+	cmdLine := launcher.buildTmuxCommand(
+		"/home/stefan/Github_Repos/flux",
+		"/tmp/example-prompt.txt",
+		"/tmp/example-stdout.log",
+		"/tmp/example-stderr.log",
+		"/tmp/example-exit.code",
+	)
+
+	if !strings.Contains(cmdLine, "--full-auto") {
+		t.Fatalf("expected --full-auto in tmux command, got: %s", cmdLine)
+	}
+	if !strings.Contains(cmdLine, " -C ") {
+		t.Fatalf("expected -C in tmux command, got: %s", cmdLine)
+	}
+	if !strings.Contains(cmdLine, "$(cat ") {
+		t.Fatalf("expected prompt file expansion in tmux command, got: %s", cmdLine)
+	}
+	if strings.Contains(cmdLine, "--approval-mode") {
+		t.Fatalf("unexpected legacy --approval-mode flag in tmux command: %s", cmdLine)
+	}
+	if strings.Contains(cmdLine, "--context") {
+		t.Fatalf("unexpected legacy --context flag in tmux command: %s", cmdLine)
+	}
 }
 
 func initGitRepo(t *testing.T, dir string) {
@@ -243,7 +314,25 @@ func initGitRepo(t *testing.T, dir string) {
 	runCmd(t, dir, "git", "commit", "-m", "chore: init test repo")
 }
 
-func newTestStore(t *testing.T) (*state.Store, int64) {
+func setupRemoteRepository(t *testing.T, baseDir, projectName string) string {
+	t.Helper()
+
+	originPath := filepath.Join(baseDir, projectName+".git")
+	seedDir := filepath.Join(baseDir, projectName+"-seed")
+	if err := os.MkdirAll(seedDir, 0o755); err != nil {
+		t.Fatalf("create seed dir: %v", err)
+	}
+
+	runCmd(t, baseDir, "git", "init", "--bare", originPath)
+	initGitRepo(t, seedDir)
+	runCmd(t, seedDir, "git", "remote", "add", "origin", originPath)
+	runCmd(t, seedDir, "git", "push", "-u", "origin", "main")
+	runCmd(t, baseDir, "git", "--git-dir", originPath, "symbolic-ref", "HEAD", "refs/heads/main")
+
+	return originPath
+}
+
+func newTestStore(t *testing.T, projectName, repoURL string) (*state.Store, int64) {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "state.db")
@@ -253,8 +342,9 @@ func newTestStore(t *testing.T) (*state.Store, int64) {
 	}
 
 	projectID, err := store.CreateProject(context.Background(), state.Project{
-		Name:   "test-project",
-		Status: state.ProjectStatusWorking,
+		Name:    projectName,
+		Status:  state.ProjectStatusWorking,
+		RepoURL: repoURL,
 	})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)

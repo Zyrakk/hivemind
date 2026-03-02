@@ -71,6 +71,43 @@ type runtimeConfig struct {
 	} `yaml:"git"`
 }
 
+type plannerEvaluatorBridge struct {
+	evaluator *evaluator.Evaluator
+	logger    *slog.Logger
+}
+
+func (b plannerEvaluatorBridge) EvaluateWorkerOutput(ctx context.Context, session launcher.Session) (*evaluator.EvalResult, error) {
+	completionResult, err := b.HandleWorkerCompletionDetailed(ctx, session.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	if completionResult == nil {
+		reason := "completion handler returned nil result"
+		if b.logger != nil {
+			b.logger.Warn("evaluation skipped: "+reason, slog.String("session_id", session.SessionID))
+		}
+		return nil, fmt.Errorf(reason)
+	}
+
+	return &evaluator.EvalResult{
+		Action:        completionResult.Action,
+		RetryCount:    completionResult.RetryCount,
+		NextSessionID: completionResult.NextSessionID,
+	}, nil
+}
+
+func (b plannerEvaluatorBridge) HandleWorkerCompletionDetailed(ctx context.Context, sessionID string) (*evaluator.CompletionResult, error) {
+	if b.evaluator == nil {
+		reason := "evaluator is not initialized"
+		if b.logger != nil {
+			b.logger.Warn("evaluation skipped: "+reason, slog.String("session_id", sessionID))
+		}
+		return nil, fmt.Errorf(reason)
+	}
+
+	return b.evaluator.HandleWorkerCompletionDetailed(ctx, sessionID)
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -177,7 +214,10 @@ func main() {
 
 	plannerService := planner.New(glmClient, consultants, launcherService, store, "prompts", logger)
 	evaluatorService := evaluator.New(glmClient, consultants, launcherService, store, logger)
-	plannerService.SetEvaluator(evaluatorService)
+	plannerService.SetEvaluator(plannerEvaluatorBridge{
+		evaluator: evaluatorService,
+		logger:    logger,
+	})
 
 	dcfg := dashboard.DefaultConfig()
 	dcfg.Host = defaultString(cfg.Dashboard.Host, "0.0.0.0")
