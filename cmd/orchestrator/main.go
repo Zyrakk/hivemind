@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/zyrakk/hivemind/internal/dashboard"
 	"github.com/zyrakk/hivemind/internal/evaluator"
@@ -377,7 +378,28 @@ func isStdinTTY() (bool, error) {
 		return false, err
 	}
 
-	return (info.Mode() & os.ModeCharDevice) != 0, nil
+	if (info.Mode() & os.ModeCharDevice) == 0 {
+		return false, nil
+	}
+
+	// ModeCharDevice is also true for /dev/null. Confirm terminal capability with ioctl.
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		os.Stdin.Fd(),
+		uintptr(syscall.TCGETS),
+		uintptr(unsafe.Pointer(&termios)),
+		0,
+		0,
+		0,
+	)
+	if errno == 0 {
+		return true, nil
+	}
+	if errno == syscall.ENOTTY {
+		return false, nil
+	}
+	return false, fmt.Errorf("stdin ioctl tcgets: %w", errno)
 }
 
 func shutdownDashboard(logger *slog.Logger, srv *http.Server) {
