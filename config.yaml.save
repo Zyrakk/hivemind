@@ -1,7 +1,7 @@
 glm:
   api_key_env: ZAI_API_KEY
   model: glm-4.7
-  base_url: https://api.z.ai/v1
+  base_url: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
   max_retries: 3
   timeout: 60s
 
