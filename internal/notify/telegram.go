@@ -409,10 +409,10 @@ func (t *TelegramBot) runApprovalCleanup(ctx context.Context) {
 }
 
 func (t *TelegramBot) handleUpdate(ctx context.Context, update tgbotapi.Update) {
-	if update.Message == nil {
+	msg := inboundMessage(update)
+	if msg == nil {
 		return
 	}
-	msg := update.Message
 
 	if msg.Chat == nil || msg.Chat.ID != t.allowedChatID {
 		username := ""
@@ -450,6 +450,16 @@ func (t *TelegramBot) handleUpdate(ctx context.Context, update tgbotapi.Update) 
 	if strings.TrimSpace(response) != "" {
 		_ = t.enqueueMessage(ctx, response)
 	}
+}
+
+func inboundMessage(update tgbotapi.Update) *tgbotapi.Message {
+	if update.Message != nil {
+		return update.Message
+	}
+	if update.ChannelPost != nil {
+		return update.ChannelPost
+	}
+	return nil
 }
 
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {

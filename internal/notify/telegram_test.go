@@ -238,6 +238,37 @@ func TestSecurityUnauthorizedChatIsIgnored(t *testing.T) {
 	}
 }
 
+func TestChannelPostFreeTextHandled(t *testing.T) {
+	now := time.Now().UTC()
+	store := newMockStore(now)
+	bot := newTestBot(store)
+	bot.pendingApprovals["input-channel"] = &PendingApproval{
+		ID:          "input-channel",
+		Type:        "input",
+		ProjectID:   "flux",
+		Description: "resolver por channel post",
+		AcceptsText: true,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(24 * time.Hour),
+	}
+
+	update := tgbotapi.Update{
+		ChannelPost: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: 1234},
+			Text: "respuesta desde canal",
+		},
+	}
+
+	bot.handleUpdate(context.Background(), update)
+
+	if _, ok := bot.pendingApprovals["input-channel"]; ok {
+		t.Fatalf("expected input approval resolved from channel post")
+	}
+	if store.countEventsByType("input_response") == 0 {
+		t.Fatalf("expected input_response event from channel post")
+	}
+}
+
 func TestPendingApprovalsConcurrentAccess(t *testing.T) {
 	bot := newTestBot(newMockStore(time.Now().UTC()))
 	ctx := context.Background()
