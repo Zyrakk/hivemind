@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,6 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/zyrakk/hivemind/internal/dashboard"
+	directivepkg "github.com/zyrakk/hivemind/internal/directive"
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
@@ -25,12 +25,6 @@ import (
 	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 	"gopkg.in/yaml.v3"
-)
-
-var (
-	projectRoutingPrefixRE = regexp.MustCompile(`(?i)^\s*(?:proyecto|project)\s*:\s*(.+)$`)
-	directiveLabelPrefixRE = regexp.MustCompile(`(?i)^(?:directriz|directive)\s*:\s*`)
-	inlineDirectiveLabelRE = regexp.MustCompile(`(?i)\b(?:directriz|directive)\s*:`)
 )
 
 type runtimeConfig struct {
@@ -239,13 +233,16 @@ func main() {
 
 	var telegramNotifier *notify.TelegramBot
 	if telegramToken != "" && telegramChatID != 0 {
-		telegramNotifier = notify.NewTelegramBot(telegramToken, telegramChatID, plannerService, evaluatorService, store, logger)
+		telegramNotifier = notify.NewTelegramBot(telegramToken, telegramChatID, plannerService, store, logger)
 		telegramNotifier.SetWorkerController(launcherService)
 		telegramNotifier.SetConsultants(consultants)
 		if startErr := telegramNotifier.Start(ctx); startErr != nil {
 			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
 			telegramNotifier = nil
 		} else {
+			plannerService.SetNotifier(telegramNotifier)
+			evaluatorService.SetNotifier(telegramNotifier)
+
 			defer func() {
 				if stopErr := telegramNotifier.Stop(); stopErr != nil && !errors.Is(stopErr, notify.ErrBotNotStarted) {
 					logger.Error("failed to stop telegram notifier", slog.Any("error", stopErr))
@@ -331,7 +328,7 @@ func main() {
 		projectRef := defaultProjectRef
 		promptProjectRef = ""
 
-		if parsedDirective, parsedProjectRef, hasProjectRouting := parseDirectiveRouting(rawDirective); hasProjectRouting {
+		if parsedDirective, parsedProjectRef, hasProjectRouting := directivepkg.ParseRouting(rawDirective); hasProjectRouting {
 			parsedProjectRef = strings.TrimSpace(parsedProjectRef)
 			if parsedProjectRef == "" {
 				fmt.Printf("proyecto '%s' no encontrado\n", parsedProjectRef)
@@ -444,40 +441,6 @@ func loadConfig(path string) (runtimeConfig, error) {
 	}
 
 	return cfg, nil
-}
-
-func parseDirectiveRouting(rawDirective string) (directive string, projectRef string, hasProjectRouting bool) {
-	trimmed := strings.TrimSpace(rawDirective)
-	matches := projectRoutingPrefixRE.FindStringSubmatch(trimmed)
-	if len(matches) != 2 {
-		return trimmed, "", false
-	}
-
-	rest := strings.TrimSpace(matches[1])
-	if rest == "" {
-		return "", "", true
-	}
-
-	splitAt := len(rest)
-	if idx := strings.Index(rest, "."); idx >= 0 && idx < splitAt {
-		splitAt = idx
-	}
-	if idx := strings.IndexAny(rest, "\n\r"); idx >= 0 && idx < splitAt {
-		splitAt = idx
-	}
-	if loc := inlineDirectiveLabelRE.FindStringIndex(rest); loc != nil && loc[0] >= 0 && loc[0] < splitAt {
-		splitAt = loc[0]
-	}
-
-	projectRef = strings.TrimSpace(rest[:splitAt])
-	remainder := ""
-	if splitAt < len(rest) {
-		remainder = strings.TrimSpace(rest[splitAt:])
-	}
-	remainder = strings.TrimLeft(remainder, ". \t\r\n")
-	remainder = strings.TrimSpace(directiveLabelPrefixRE.ReplaceAllString(remainder, ""))
-
-	return remainder, projectRef, true
 }
 
 func defaultRuntimeConfig() runtimeConfig {

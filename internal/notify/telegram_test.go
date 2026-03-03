@@ -13,6 +13,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 )
 
@@ -71,13 +72,13 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("project command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Proyecto") {
+		if !strings.Contains(msg, "Project") {
 			t.Fatalf("expected project header in message: %q", msg)
 		}
 	})
 
 	t.Run("/approve plan", func(t *testing.T) {
-		exec := &mockPlanExecutor{}
+		exec := &mockPlanExecutor{called: make(chan string, 1)}
 		bot.plannerExec = exec
 		bot.pendingApprovals["plan-1"] = &PendingApproval{
 			ID:          "plan-1",
@@ -92,11 +93,16 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("approve command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Aprobado") {
+		if !strings.Contains(msg, "approved") {
 			t.Fatalf("expected success message, got %q", msg)
 		}
-		if exec.planID != "plan-1" {
-			t.Fatalf("expected ExecutePlan called with plan-1, got %q", exec.planID)
+		select {
+		case gotPlanID := <-exec.called:
+			if gotPlanID != "plan-1" {
+				t.Fatalf("expected ExecutePlan called with plan-1, got %q", gotPlanID)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for async ExecutePlan")
 		}
 		if _, ok := bot.pendingApprovals["plan-1"]; ok {
 			t.Fatalf("expected approval removed")
@@ -116,7 +122,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("approve pr command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Aprobado") {
+		if !strings.Contains(msg, "Approved") {
 			t.Fatalf("expected approved message, got %q", msg)
 		}
 		if store.countEventsByType("pr_approved") == 0 {
@@ -137,7 +143,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reject plan command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Rechazado") {
+		if !strings.Contains(msg, "Rejected") {
 			t.Fatalf("expected rejected message, got %q", msg)
 		}
 		if store.taskUpdates == 0 {
@@ -150,7 +156,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pause command failed: %v", err)
 		}
-		if !strings.Contains(msg, "pausado") {
+		if !strings.Contains(msg, "paused") {
 			t.Fatalf("expected paused message, got %q", msg)
 		}
 		if store.projectStatusByRef["flux"] != state.ProjectStatusPaused {
@@ -163,7 +169,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resume command failed: %v", err)
 		}
-		if !strings.Contains(msg, "reanudado") {
+		if !strings.Contains(msg, "resumed") {
 			t.Fatalf("expected resumed message, got %q", msg)
 		}
 		if store.projectStatusByRef["flux"] != state.ProjectStatusWorking {
@@ -184,7 +190,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("consult command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Consulta") {
+		if !strings.Contains(msg, "Consulted") {
 			t.Fatalf("expected consultant response, got %q", msg)
 		}
 		if store.countEventsByType("consultant_used") == 0 {
@@ -193,6 +199,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 	})
 
 	t.Run("/pending", func(t *testing.T) {
+		bot.nowFn = func() time.Time { return now }
 		bot.pendingApprovals["in-1"] = &PendingApproval{
 			ID:          "in-1",
 			Type:        "input",
@@ -206,7 +213,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pending command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Approvals") {
+		if !strings.Contains(msg, "Pending approvals") {
 			t.Fatalf("expected pending list, got %q", msg)
 		}
 	})
@@ -220,6 +227,148 @@ func TestCommandsWithMockStore(t *testing.T) {
 			t.Fatalf("expected help list, got %q", msg)
 		}
 	})
+}
+
+func TestCmdRun_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	creator := &mockPlanCreator{
+		result: &planner.PlanResult{
+			PlanID: "plan-run-1",
+			Plan: &llm.TaskPlan{
+				Confidence: 0.92,
+				Tasks: []llm.Task{
+					{
+						ID:          "task-001",
+						Title:       "Add health handler",
+						Description: "Create /health endpoint returning JSON status",
+					},
+					{
+						ID:          "task-002",
+						Title:       "Add health tests",
+						Description: "Unit and integration tests for health endpoint",
+						DependsOn:   []string{"task-001"},
+					},
+				},
+			},
+		},
+	}
+	bot.plannerCreate = creator
+
+	msg, err := bot.handleCommand(ctx, "run", "flux Implement health endpoint")
+	if err != nil {
+		t.Fatalf("run command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Plan for flux") {
+		t.Fatalf("expected plan summary, got %q", msg)
+	}
+
+	approval, ok := bot.pendingApprovals["plan-run-1"]
+	if !ok {
+		t.Fatalf("expected plan approval registration")
+	}
+	if approval.Type != "plan" {
+		t.Fatalf("expected approval type plan, got %q", approval.Type)
+	}
+	if creator.lastProj != "flux" {
+		t.Fatalf("expected project flux, got %q", creator.lastProj)
+	}
+	if creator.lastArg != "Implement health endpoint" {
+		t.Fatalf("expected directive to be parsed, got %q", creator.lastArg)
+	}
+}
+
+func TestCmdRun_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "run", "")
+	if err != nil {
+		t.Fatalf("run command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage: /run") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdRun_ProjectNotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.plannerCreate = &mockPlanCreator{
+		result: &planner.PlanResult{
+			PlanID: "plan-run-404",
+			Plan:   &llm.TaskPlan{Confidence: 0.8},
+		},
+	}
+
+	msg, err := bot.handleCommand(context.Background(), "run", "noexiste Add tests")
+	if err != nil {
+		t.Fatalf("run command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Project 'noexiste' not found") {
+		t.Fatalf("expected project not found message, got %q", msg)
+	}
+}
+
+func TestCmdRun_PlanNeedsInput(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.plannerCreate = &mockPlanCreator{
+		result: &planner.PlanResult{
+			PlanID:     "plan-input-1",
+			NeedsInput: true,
+			Plan: &llm.TaskPlan{
+				Confidence: 0.78,
+				Tasks:      []llm.Task{{ID: "task-1", Title: "Task 1", Description: "desc"}},
+				Questions:  []string{"Which API version should we target?"},
+			},
+		},
+	}
+
+	msg, err := bot.handleCommand(context.Background(), "run", "flux Add health endpoint")
+	if err != nil {
+		t.Fatalf("run command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Plan requires your input") {
+		t.Fatalf("expected needs input message, got %q", msg)
+	}
+
+	approval, ok := bot.pendingApprovals["plan-input-1"]
+	if !ok {
+		t.Fatalf("expected input approval registration")
+	}
+	if approval.Type != "input" || !approval.AcceptsText {
+		t.Fatalf("expected text input approval, got type=%q accepts_text=%t", approval.Type, approval.AcceptsText)
+	}
+}
+
+func TestCmdApprove_ExecutesPlan(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	exec := &mockPlanExecutor{called: make(chan string, 1)}
+	bot.plannerExec = exec
+	bot.pendingApprovals["plan-async-1"] = &PendingApproval{
+		ID:          "plan-async-1",
+		Type:        "plan",
+		ProjectID:   "flux",
+		Description: "Async plan",
+		CreatedAt:   time.Now().UTC(),
+		ExpiresAt:   time.Now().UTC().Add(time.Hour),
+	}
+
+	msg, err := bot.handleCommand(context.Background(), "approve", "plan-async-1")
+	if err != nil {
+		t.Fatalf("approve command failed: %v", err)
+	}
+	if !strings.Contains(msg, "approved") {
+		t.Fatalf("expected async approval message, got %q", msg)
+	}
+
+	select {
+	case got := <-exec.called:
+		if got != "plan-async-1" {
+			t.Fatalf("expected ExecutePlan called with plan-async-1, got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async ExecutePlan")
+	}
 }
 
 func TestSecurityUnauthorizedChatIsIgnored(t *testing.T) {
@@ -426,12 +575,38 @@ func newTestBot(store stateStore) *TelegramBot {
 type mockPlanExecutor struct {
 	planID string
 	err    error
+	called chan string
 }
 
 func (m *mockPlanExecutor) ExecutePlan(ctx context.Context, planID string) error {
 	_ = ctx
 	m.planID = planID
+	if m.called != nil {
+		select {
+		case m.called <- planID:
+		default:
+		}
+	}
 	return m.err
+}
+
+type mockPlanCreator struct {
+	result    *planner.PlanResult
+	err       error
+	lastArg   string
+	lastProj  string
+	callCount int
+}
+
+func (m *mockPlanCreator) CreatePlan(ctx context.Context, directive, projectID string) (*planner.PlanResult, error) {
+	_ = ctx
+	m.callCount++
+	m.lastArg = directive
+	m.lastProj = projectID
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.result, nil
 }
 
 type mockConsultant struct {
@@ -631,7 +806,7 @@ func TestHandleFreeTextWithoutPendingApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleFreeText() error = %v", err)
 	}
-	if !strings.Contains(msg, "No entiendo") {
+	if !strings.Contains(msg, "Unknown command") {
 		t.Fatalf("expected unknown message, got %q", msg)
 	}
 }
@@ -642,7 +817,7 @@ func TestApproveUnknownApprovalID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("approve command returned error: %v", err)
 	}
-	if !strings.Contains(msg, "Approval no encontrado") {
+	if !strings.Contains(msg, "Approval not found") {
 		t.Fatalf("expected not found message, got %q", msg)
 	}
 }
@@ -653,7 +828,7 @@ func TestConsultNoConsultantAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consult command error = %v", err)
 	}
-	if !strings.Contains(msg, "No hay consultores") {
+	if !strings.Contains(msg, "No consultants available") {
 		t.Fatalf("expected no consultant message, got %q", msg)
 	}
 }

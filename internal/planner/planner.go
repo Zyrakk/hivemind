@@ -40,6 +40,12 @@ type planEvaluator interface {
 	HandleWorkerCompletionDetailed(ctx context.Context, sessionID string) (*evaluator.CompletionResult, error)
 }
 
+type notifier interface {
+	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
+	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
+	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
+}
+
 type PlanResult struct {
 	Plan           *llm.TaskPlan `json:"plan"`
 	PlanID         string        `json:"plan_id"`
@@ -75,6 +81,7 @@ type Planner struct {
 	consultants []llm.ConsultantClient
 	launcher    plannerLauncher
 	evaluator   planEvaluator
+	notifier    notifier
 	db          *state.Store
 	promptsDir  string
 	logger      *slog.Logger
@@ -128,6 +135,16 @@ func (p *Planner) SetEvaluator(eval planEvaluator) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.evaluator = eval
+}
+
+func (p *Planner) SetNotifier(n notifier) {
+	if p == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.notifier = n
 }
 
 func (p *Planner) BuildPlan(ctx context.Context, directive, agentsMD string) (*llm.TaskPlan, error) {
@@ -260,6 +277,7 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 	p.mu.Lock()
 	plan, ok := p.planByID[planID]
 	planEvaluator := p.evaluator
+	planNotifier := p.notifier
 	p.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("plan %q not found", planID)
@@ -327,6 +345,13 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 						FilesAffected: append([]string(nil), s.task.Task.FilesAffected...),
 					}, plan.AgentsMD, plan.Cache)
 					if launchErr != nil {
+						if planNotifier != nil {
+							taskTitle := strings.TrimSpace(s.task.Task.Title)
+							if taskTitle == "" {
+								taskTitle = key
+							}
+							_ = planNotifier.NotifyWorkerFailed(ctx, plan.ProjectRef, taskTitle, launchErr.Error())
+						}
 						errCh <- fmt.Errorf("launch task %s: %w", key, launchErr)
 						return
 					}
@@ -385,6 +410,9 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 					statusVal := state.TaskStatusBlocked
 					_ = p.db.UpdateTask(ctx, s.task.DBTaskID, state.TaskUpdate{Status: &statusVal})
 				}
+				if planNotifier != nil {
+					_ = planNotifier.NotifyNeedsInput(ctx, plan.ProjectRef, "Plan requires a decision", planID)
+				}
 				return fmt.Errorf("execution blocked by failed dependencies")
 			}
 		}
@@ -423,6 +451,9 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 							status := state.TaskStatusCompleted
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyTaskCompleted(ctx, plan.ProjectRef, fallbackTaskTitle(s.task.Task, 0))
+							}
 						case "iterate":
 							nextSessionID := strings.TrimSpace(evalResult.NextSessionID)
 							if nextSessionID == "" {
@@ -438,6 +469,9 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 							status := state.TaskStatusBlocked
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyNeedsInput(ctx, plan.ProjectRef, "Plan requires a decision", planID)
+							}
 						default:
 							return fmt.Errorf("unsupported evaluator action %q for task %s", evalResult.Action, taskKey)
 						}
@@ -450,6 +484,9 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 							status := state.TaskStatusBlocked
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyNeedsInput(ctx, plan.ProjectRef, "Plan requires a decision", planID)
+							}
 							goto continueOuter
 						}
 
@@ -470,14 +507,23 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 							status := state.TaskStatusCompleted
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyTaskCompleted(ctx, plan.ProjectRef, fallbackTaskTitle(s.task.Task, 0))
+							}
 						case "escalate":
 							status := state.TaskStatusBlocked
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyNeedsInput(ctx, plan.ProjectRef, "Plan requires a decision", planID)
+							}
 						default:
 							status := state.TaskStatusBlocked
 							s.status = status
 							persistStatus = &status
+							if planNotifier != nil {
+								_ = planNotifier.NotifyNeedsInput(ctx, plan.ProjectRef, "Plan requires a decision", planID)
+							}
 						}
 					}
 					if persistStatus != nil && p.db != nil && s.task.DBTaskID > 0 {
@@ -494,6 +540,18 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 					statusVal = state.TaskStatusFailed
 				}
 				s.status = statusVal
+				if planNotifier != nil {
+					taskTitle := fallbackTaskTitle(s.task.Task, 0)
+					if statusVal == state.TaskStatusCompleted {
+						_ = planNotifier.NotifyTaskCompleted(ctx, plan.ProjectRef, taskTitle)
+					} else {
+						errMsg := strings.TrimSpace(session.Error)
+						if errMsg == "" {
+							errMsg = "worker did not complete successfully"
+						}
+						_ = planNotifier.NotifyWorkerFailed(ctx, plan.ProjectRef, taskTitle, errMsg)
+					}
+				}
 
 				if p.db != nil && s.task.DBTaskID > 0 {
 					update := state.TaskUpdate{Status: &statusVal}

@@ -1,12 +1,8 @@
-package main
+package directive
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/zyrakk/hivemind/internal/directive"
-)
-
-func TestParseDirectiveRouting(t *testing.T) {
+func TestParseRouting(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -58,7 +54,7 @@ func TestParseDirectiveRouting(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			gotDir, gotProj, gotParsed := directive.ParseRouting(tc.input)
+			gotDir, gotProj, gotParsed := ParseRouting(tc.input)
 			if gotDir != tc.wantDir {
 				t.Fatalf("directive mismatch: got %q want %q", gotDir, tc.wantDir)
 			}

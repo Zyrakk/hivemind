@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -238,6 +239,74 @@ func TestExecutePlanRunsEvaluatorAndHandlesIterate(t *testing.T) {
 	}
 }
 
+func TestNotificationsWired(t *testing.T) {
+	t.Run("task completed", func(t *testing.T) {
+		store, cleanup := setupPlannerTestEnv(t)
+		defer cleanup()
+
+		glm := &mockPlannerGLM{
+			plans: []*llm.TaskPlan{
+				{
+					Confidence: 0.9,
+					Tasks:      []llm.Task{{ID: "task-1", Title: "Parser", Description: "task", BranchName: "parser"}},
+				},
+			},
+		}
+
+		launch := newMockPlannerLauncher(true)
+		launch.completionStatus = state.WorkerStatusCompleted
+
+		planner := NewWithDeps(glm, nil, launch, store, "prompts", nil)
+		notifier := &mockPlannerNotifier{}
+		planner.SetNotifier(notifier)
+
+		planResult, err := planner.CreatePlan(context.Background(), "Run task", "flux")
+		if err != nil {
+			t.Fatalf("CreatePlan returned error: %v", err)
+		}
+		if err := planner.ExecutePlan(context.Background(), planResult.PlanID); err != nil {
+			t.Fatalf("ExecutePlan returned error: %v", err)
+		}
+
+		if notifier.completedCount() == 0 {
+			t.Fatalf("expected task completion notification")
+		}
+	})
+
+	t.Run("worker failed", func(t *testing.T) {
+		store, cleanup := setupPlannerTestEnv(t)
+		defer cleanup()
+
+		glm := &mockPlannerGLM{
+			plans: []*llm.TaskPlan{
+				{
+					Confidence: 0.9,
+					Tasks:      []llm.Task{{ID: "task-1", Title: "Parser", Description: "task", BranchName: "parser"}},
+				},
+			},
+		}
+
+		launch := newMockPlannerLauncher(true)
+		launch.completionStatus = state.WorkerStatusFailed
+		launch.completionError = "timeout"
+
+		planner := NewWithDeps(glm, nil, launch, store, "prompts", nil)
+		notifier := &mockPlannerNotifier{}
+		planner.SetNotifier(notifier)
+
+		planResult, err := planner.CreatePlan(context.Background(), "Run task", "flux")
+		if err != nil {
+			t.Fatalf("CreatePlan returned error: %v", err)
+		}
+		if err := planner.ExecutePlan(context.Background(), planResult.PlanID); err == nil {
+			t.Fatalf("expected execution error for failed worker")
+		}
+		if notifier.failedCount() == 0 {
+			t.Fatalf("expected worker failure notification")
+		}
+	})
+}
+
 type mockPlannerGLM struct {
 	mu    sync.Mutex
 	plans []*llm.TaskPlan
@@ -326,8 +395,10 @@ func (m *mockConsultant) calls() int {
 }
 
 type mockPlannerLauncher struct {
-	autoComplete bool
-	doneCh       chan launcher.Session
+	autoComplete     bool
+	doneCh           chan launcher.Session
+	completionStatus string
+	completionError  string
 
 	mu       sync.Mutex
 	launched []string
@@ -417,12 +488,62 @@ func (m *mockPlannerLauncher) LaunchWorker(ctx context.Context, task launcher.Ta
 	if m.autoComplete {
 		go func(s launcher.Session) {
 			time.Sleep(20 * time.Millisecond)
-			s.Status = state.WorkerStatusCompleted
+			if strings.TrimSpace(m.completionStatus) != "" {
+				s.Status = m.completionStatus
+			} else {
+				s.Status = state.WorkerStatusCompleted
+			}
+			s.Error = m.completionError
 			m.doneCh <- s
 		}(*session)
 	}
 
 	return session, nil
+}
+
+type mockPlannerNotifier struct {
+	mu             sync.Mutex
+	completedTasks []string
+	failedTasks    []string
+}
+
+func (m *mockPlannerNotifier) NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error {
+	_ = ctx
+	_ = projectID
+	_ = question
+	_ = approvalID
+	return nil
+}
+
+func (m *mockPlannerNotifier) NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error {
+	_ = ctx
+	_ = projectID
+	_ = errMsg
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failedTasks = append(m.failedTasks, taskTitle)
+	return nil
+}
+
+func (m *mockPlannerNotifier) NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error {
+	_ = ctx
+	_ = projectID
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.completedTasks = append(m.completedTasks, taskTitle)
+	return nil
+}
+
+func (m *mockPlannerNotifier) completedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.completedTasks)
+}
+
+func (m *mockPlannerNotifier) failedCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.failedTasks)
 }
 
 func (m *mockPlannerLauncher) WorkerDone() <-chan launcher.Session {

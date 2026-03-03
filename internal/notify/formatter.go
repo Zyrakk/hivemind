@@ -56,7 +56,7 @@ func TruncateTelegramMessage(text string) string {
 		return text
 	}
 
-	suffix := EscapeMarkdownV2("... (truncado)")
+	suffix := EscapeMarkdownV2("... (truncated)")
 	suffixRunes := []rune(suffix)
 	keep := telegramMessageLimit - len(suffixRunes)
 	if keep < 0 {
@@ -68,57 +68,57 @@ func TruncateTelegramMessage(text string) string {
 
 func FormatNeedsInputMessage(projectID, question, approvalID string) string {
 	lines := []string{
-		fmt.Sprintf("🟡 %s: %s", projectID, question),
-		fmt.Sprintf("Responde con /approve %s o /reject %s {razon}", approvalID, approvalID),
-		"O responde directamente con texto.",
+		fmt.Sprintf("◐ %s: %s", projectID, question),
+		fmt.Sprintf("Reply with /approve %s or /reject %s {reason}", approvalID, approvalID),
+		"Or reply directly with free text.",
 	}
 	return formatEscapedLines(lines...)
 }
 
 func FormatPRReadyMessage(projectID, prURL, summary, approvalID string) string {
 	lines := []string{
-		EscapeMarkdownV2(fmt.Sprintf("🔵 %s: PR listo para review", projectID)),
+		EscapeMarkdownV2(fmt.Sprintf("◎ %s: PR ready for review", projectID)),
 		EscapeMarkdownV2(summary),
-		EscapeMarkdownV2("🔗 ") + MarkdownV2Link("Abrir PR", prURL),
-		EscapeMarkdownV2(fmt.Sprintf("Responde con /approve %s o /reject %s {razon}", approvalID, approvalID)),
+		EscapeMarkdownV2("→ ") + MarkdownV2Link("Open PR", prURL),
+		EscapeMarkdownV2(fmt.Sprintf("Reply with /approve %s or /reject %s {reason}", approvalID, approvalID)),
 	}
 	return TruncateTelegramMessage(strings.Join(compactLines(lines), "\n"))
 }
 
 func FormatWorkerFailedMessage(projectID, taskTitle, errMsg string) string {
 	lines := []string{
-		fmt.Sprintf("🔴 %s: Worker fallo en '%s'", projectID, taskTitle),
+		fmt.Sprintf("! %s: worker failed on '%s'", projectID, taskTitle),
 		fmt.Sprintf("Error: %s", errMsg),
-		"El orquestador intentara resolver automaticamente.",
+		"The orchestrator will attempt to resolve automatically.",
 	}
 	return formatEscapedLines(lines...)
 }
 
 func FormatTaskCompletedMessage(projectID, taskTitle string) string {
-	return formatEscapedLines(fmt.Sprintf("✅ %s: '%s' completada", projectID, taskTitle))
+	return formatEscapedLines(fmt.Sprintf("✓ %s: '%s' completed", projectID, taskTitle))
 }
 
 func FormatConsultantUsedMessage(consultantName, question, summary string) string {
 	lines := []string{
-		fmt.Sprintf("💡 Consulta a %s:", consultantName),
-		fmt.Sprintf("Pregunta: %s", question),
-		fmt.Sprintf("Respuesta: %s", summary),
+		fmt.Sprintf("→ Consulted %s:", consultantName),
+		fmt.Sprintf("Question: %s", question),
+		fmt.Sprintf("Response: %s", summary),
 	}
 	return formatEscapedLines(lines...)
 }
 
 func FormatBudgetWarningMessage(consultantName string, percentUsed float64) string {
-	return formatEscapedLines(fmt.Sprintf("⚠️ Presupuesto %s: %.1f%% usado este mes", consultantName, percentUsed))
+	return formatEscapedLines(fmt.Sprintf("‼ Budget %s: %.1f%% used this month", consultantName, percentUsed))
 }
 
 func FormatStatusMessage(global state.GlobalState) string {
-	lines := []string{"📊 hivemind Status"}
+	lines := []string{"▸ Hivemind Status"}
 	for _, project := range global.Projects {
 		lines = append(lines, formatProjectSummaryLine(project))
 	}
 	lines = append(lines, "---")
 	lines = append(lines, fmt.Sprintf(
-		"Workers: %d activos | Tareas: %d pendientes | PRs: %d",
+		"Workers: %d active | Tasks: %d pending | PRs: %d",
 		global.Counters.ActiveWorkers,
 		global.Counters.PendingTasks,
 		global.Counters.PendingReview,
@@ -134,25 +134,25 @@ func FormatProjectDetailMessage(detail state.ProjectDetail) string {
 		}
 	}
 
-	lastEvent := "sin eventos recientes"
+	lastEvent := "no recent events"
 	if len(detail.Events) > 0 && strings.TrimSpace(detail.Events[0].Description) != "" {
 		lastEvent = strings.TrimSpace(detail.Events[0].Description)
 	}
 
 	progress := int(detail.Progress.Overall * 100)
 	lines := []string{
-		fmt.Sprintf("📊 Proyecto %s", detail.ProjectRef),
-		fmt.Sprintf("Estado: %s", detail.Project.Status),
-		fmt.Sprintf("Tareas en curso: %d", inProgress),
-		fmt.Sprintf("Ultimo evento: %s", lastEvent),
-		fmt.Sprintf("Progreso: %d%%", progress),
+		fmt.Sprintf("▸ Project %s", detail.ProjectRef),
+		fmt.Sprintf("Status: %s", detail.Project.Status),
+		fmt.Sprintf("Tasks in progress: %d", inProgress),
+		fmt.Sprintf("Last event: %s", lastEvent),
+		fmt.Sprintf("Progress: %d%%", progress),
 	}
 	return formatEscapedLines(lines...)
 }
 
 func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) string {
 	if len(approvals) == 0 {
-		return formatEscapedLines("📋 Approvals pendientes: ninguno")
+		return formatEscapedLines("▸ Pending approvals: none")
 	}
 
 	sorted := make([]*PendingApproval, 0, len(approvals))
@@ -165,10 +165,10 @@ func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) 
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
 
-	lines := []string{"📋 Approvals pendientes:"}
+	lines := []string{"▸ Pending approvals:"}
 	for idx, approval := range sorted {
 		line := fmt.Sprintf(
-			"%d. %s (%s) %s - %s [%s]",
+			"%d. %s (%s) %s — %s [%s]",
 			idx+1,
 			approval.ID,
 			approval.Type,
@@ -184,16 +184,17 @@ func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) 
 
 func FormatHelpMessage() string {
 	lines := []string{
-		"Comandos disponibles:",
-		"/status - estado global",
-		"/project {nombre} - detalle de proyecto",
-		"/approve {id} - aprobar plan/PR/input",
-		"/reject {id} {razon} - rechazar plan/PR/input",
-		"/pause {proyecto} - pausar workers del proyecto",
-		"/resume {proyecto} - reanudar proyecto",
-		"/consult {pregunta} - consultar Claude/Gemini",
-		"/pending - listar approvals activos",
-		"/help - esta ayuda",
+		"▸ Hivemind Commands",
+		"/status — global overview",
+		"/project {name} — project detail",
+		"/run {project} {directive} — submit new work",
+		"/approve {id} — approve plan/PR/input",
+		"/reject {id} {reason} — reject with feedback",
+		"/pause {project} — pause project workers",
+		"/resume {project} — resume project",
+		"/consult {question} — query Claude/Gemini",
+		"/pending — list active approvals",
+		"/help — this message",
 	}
 	return formatEscapedLines(lines...)
 }
@@ -236,30 +237,30 @@ func compactLines(lines []string) []string {
 func formatProjectSummaryLine(project state.ProjectSummary) string {
 	switch project.Status {
 	case state.ProjectStatusWorking:
-		return fmt.Sprintf("🟢 %s: %d workers activos", project.Name, project.ActiveWorkers)
+		return fmt.Sprintf("● %s: %d workers active", project.Name, project.ActiveWorkers)
 	case state.ProjectStatusNeedsInput:
-		return fmt.Sprintf("🟡 %s: esperando input", project.Name)
+		return fmt.Sprintf("◐ %s: awaiting input", project.Name)
 	case state.ProjectStatusPendingReview:
-		return fmt.Sprintf("🔵 %s: pendiente review", project.Name)
+		return fmt.Sprintf("◎ %s: pending review", project.Name)
 	case state.ProjectStatusBlocked:
-		return fmt.Sprintf("🔴 %s: bloqueado", project.Name)
+		return fmt.Sprintf("■ %s: blocked", project.Name)
 	case state.ProjectStatusPaused:
-		return fmt.Sprintf("⚪ %s: pausado", project.Name)
+		return fmt.Sprintf("‖ %s: paused", project.Name)
 	default:
-		return fmt.Sprintf("⚪ %s: %s", project.Name, project.Status)
+		return fmt.Sprintf("  %s: %s", project.Name, project.Status)
 	}
 }
 
 func formatRemaining(remaining time.Duration) string {
 	if remaining <= 0 {
-		return "expirado"
+		return "expired"
 	}
 	if remaining >= time.Hour {
-		return fmt.Sprintf("%dh restantes", int(remaining.Round(time.Hour)/time.Hour))
+		return fmt.Sprintf("%dh remaining", int(remaining.Round(time.Hour)/time.Hour))
 	}
 	minutes := int(remaining.Round(time.Minute) / time.Minute)
 	if minutes <= 0 {
 		minutes = 1
 	}
-	return fmt.Sprintf("%dm restantes", minutes)
+	return fmt.Sprintf("%dm remaining", minutes)
 }

@@ -15,7 +15,7 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/zyrakk/hivemind/internal/evaluator"
+	directivepkg "github.com/zyrakk/hivemind/internal/directive"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
 	"github.com/zyrakk/hivemind/internal/planner"
@@ -52,6 +52,15 @@ type plannerExecutor interface {
 	ExecutePlan(ctx context.Context, planID string) error
 }
 
+type plannerCreator interface {
+	CreatePlan(ctx context.Context, directive, projectID string) (*planner.PlanResult, error)
+}
+
+type plannerService interface {
+	plannerExecutor
+	plannerCreator
+}
+
 type workerController interface {
 	GetActiveWorkers() []launcher.WorkerProcess
 	PauseWorker(sessionID string) error
@@ -73,19 +82,17 @@ type TelegramBot struct {
 	botToken      string
 	allowedChatID int64
 	bot           *tgbotapi.BotAPI
-	planner       *planner.Planner
-	evaluator     *evaluator.Evaluator
-	db            *state.Store
 
 	pendingApprovals map[string]*PendingApproval
 	approvalsMu      sync.RWMutex
 	outbox           chan string
 	logger           *slog.Logger
 
-	store       stateStore
-	plannerExec plannerExecutor
-	workers     workerController
-	consultants []llm.ConsultantClient
+	plannerCreate plannerCreator
+	store         stateStore
+	plannerExec   plannerExecutor
+	workers       workerController
+	consultants   []llm.ConsultantClient
 
 	inputResolver func(ctx context.Context, approval *PendingApproval, response string) error
 	sendMessageFn func(text string) error
@@ -108,8 +115,7 @@ type TelegramBot struct {
 func NewTelegramBot(
 	botToken string,
 	allowedChatID int64,
-	plannerService *planner.Planner,
-	evaluatorService *evaluator.Evaluator,
+	planner plannerService,
 	db *state.Store,
 	logger *slog.Logger,
 ) *TelegramBot {
@@ -120,14 +126,12 @@ func NewTelegramBot(
 	return &TelegramBot{
 		botToken:         botToken,
 		allowedChatID:    allowedChatID,
-		planner:          plannerService,
-		evaluator:        evaluatorService,
-		db:               db,
 		pendingApprovals: make(map[string]*PendingApproval),
 		outbox:           make(chan string, defaultOutboxBuffer),
 		logger:           logger,
+		plannerCreate:    planner,
 		store:            db,
-		plannerExec:      plannerService,
+		plannerExec:      planner,
 		nowFn:            time.Now,
 		approvalsTTL:     defaultApprovalsTTL,
 		prApprovalTTL:    defaultPRApprovalTTL,
@@ -181,11 +185,10 @@ func (t *TelegramBot) Start(ctx context.Context) error {
 	if t.outbox == nil {
 		t.outbox = make(chan string, defaultOutboxBuffer)
 	}
-	if t.store == nil {
-		t.store = t.db
-	}
 	if t.plannerExec == nil {
-		t.plannerExec = t.planner
+		if svc, ok := t.plannerCreate.(plannerExecutor); ok {
+			t.plannerExec = svc
+		}
 	}
 	if t.nowFn == nil {
 		t.nowFn = time.Now
@@ -468,6 +471,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdStatus(ctx)
 	case "project":
 		return t.cmdProject(ctx, args)
+	case "run":
+		return t.cmdRun(ctx, args)
 	case "approve":
 		return t.cmdApprove(ctx, args)
 	case "reject":
@@ -483,7 +488,7 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 	case "help":
 		return FormatHelpMessage(), nil
 	default:
-		return formatEscapedLines("No entiendo. Usa /help para ver comandos."), nil
+		return formatEscapedLines("Unknown command. Use /help to see available commands."), nil
 	}
 }
 
@@ -494,14 +499,14 @@ func (t *TelegramBot) handleFreeText(ctx context.Context, text string) (string, 
 
 	approval := t.findLatestTextApproval()
 	if approval == nil {
-		return formatEscapedLines("No entiendo. Usa /help para ver comandos."), nil
+		return formatEscapedLines("Unknown command. Use /help to see available commands."), nil
 	}
 
 	if err := t.resolveInputApproval(ctx, approval, text); err != nil {
 		return "", err
 	}
 
-	return formatEscapedLines(fmt.Sprintf("✅ Input registrado para %s", approval.ProjectID)), nil
+	return formatEscapedLines(fmt.Sprintf("✓ Input registered for %s", approval.ProjectID)), nil
 }
 
 func (t *TelegramBot) cmdStatus(ctx context.Context) (string, error) {
@@ -520,7 +525,7 @@ func (t *TelegramBot) cmdStatus(ctx context.Context) (string, error) {
 func (t *TelegramBot) cmdProject(ctx context.Context, args string) (string, error) {
 	projectRef := strings.TrimSpace(args)
 	if projectRef == "" {
-		return formatEscapedLines("Uso: /project {nombre}"), nil
+		return formatEscapedLines("Usage: /project {name}"), nil
 	}
 	if t.store == nil {
 		return "", fmt.Errorf("state store is not configured")
@@ -539,51 +544,162 @@ func (t *TelegramBot) cmdProject(ctx context.Context, args string) (string, erro
 	return FormatProjectDetailMessage(detail), nil
 }
 
+func (t *TelegramBot) cmdRun(ctx context.Context, args string) (string, error) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return formatEscapedLines(
+			"Usage: /run {project} {directive}",
+			"Example: /run flux Implement health check endpoint",
+		), nil
+	}
+	if t.plannerCreate == nil {
+		return formatEscapedLines("✗ Planner is not configured."), nil
+	}
+
+	directive, projectRef, hasRouting := parseDirectiveRoutingFromArgs(args)
+	if !hasRouting {
+		parts := strings.SplitN(args, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+			return formatEscapedLines("Need project and directive. Example: /run flux Add integration tests"), nil
+		}
+		projectRef = strings.TrimSpace(parts[0])
+		directive = strings.TrimSpace(parts[1])
+	}
+	projectRef = strings.TrimSpace(projectRef)
+	directive = strings.TrimSpace(directive)
+	if projectRef == "" || directive == "" {
+		return formatEscapedLines("Need project and directive. Example: /run flux Add integration tests"), nil
+	}
+
+	if t.store != nil {
+		if _, err := t.store.GetProjectDetail(ctx, projectRef); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				return formatEscapedLines(fmt.Sprintf("✗ Project '%s' not found.", projectRef)), nil
+			}
+			return "", err
+		}
+	}
+
+	t.setLastProjectRef(projectRef)
+
+	_ = t.enqueueMessage(ctx, formatEscapedLines(
+		fmt.Sprintf("… Planning for %s", projectRef),
+		fmt.Sprintf("Directive: %s", directive),
+	))
+
+	planResult, err := t.plannerCreate.CreatePlan(ctx, directive, projectRef)
+	if err != nil {
+		return formatEscapedLines(fmt.Sprintf("✗ Plan creation failed: %s", err.Error())), nil
+	}
+	if planResult == nil || planResult.Plan == nil {
+		return formatEscapedLines("✗ Plan creation failed: planner returned empty result."), nil
+	}
+
+	if planResult.NeedsInput {
+		var sb strings.Builder
+		sb.WriteString("? Plan requires your input:\n")
+		for i, q := range planResult.Plan.Questions {
+			sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, strings.TrimSpace(q)))
+		}
+		sb.WriteString("\nReply with free text to provide answers.")
+
+		t.RegisterPendingApproval(PendingApproval{
+			ID:          planResult.PlanID,
+			Type:        "input",
+			ProjectID:   projectRef,
+			Description: directive,
+			AcceptsText: true,
+		})
+
+		return formatEscapedLines(sb.String()), nil
+	}
+
+	summary := formatPlanSummary(projectRef, planResult)
+	t.RegisterPendingApproval(PendingApproval{
+		ID:          planResult.PlanID,
+		Type:        "plan",
+		ProjectID:   projectRef,
+		Description: directive,
+		AcceptsText: false,
+	})
+
+	return summary, nil
+}
+
 func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, error) {
 	approvalID := strings.TrimSpace(args)
 	if approvalID == "" {
-		return formatEscapedLines("Uso: /approve {id}"), nil
+		return formatEscapedLines("Usage: /approve {id}"), nil
+	}
+
+	t.approvalsMu.RLock()
+	approval, ok := t.pendingApprovals[approvalID]
+	if !ok {
+		t.approvalsMu.RUnlock()
+		return formatEscapedLines(fmt.Sprintf("✗ Approval not found: %s", approvalID)), nil
+	}
+	copyApproval := *approval
+	t.approvalsMu.RUnlock()
+
+	switch strings.ToLower(strings.TrimSpace(copyApproval.Type)) {
+	case "plan":
+		t.approvalsMu.Lock()
+		delete(t.pendingApprovals, approvalID)
+		t.approvalsMu.Unlock()
+
+		go func(approval PendingApproval) {
+			execCtx := context.Background()
+			_ = t.enqueueMessage(execCtx, formatEscapedLines(
+				fmt.Sprintf(">> Executing plan %s for %s", approval.ID, approval.ProjectID),
+			))
+
+			if t.plannerExec == nil {
+				_ = t.enqueueMessage(execCtx, formatEscapedLines(
+					fmt.Sprintf("✗ Plan %s failed: planner is not configured", approval.ID),
+				))
+				return
+			}
+
+			if err := t.plannerExec.ExecutePlan(execCtx, approval.ID); err != nil {
+				_ = t.enqueueMessage(execCtx, formatEscapedLines(
+					fmt.Sprintf("✗ Plan %s failed: %s", approval.ID, err.Error()),
+				))
+				return
+			}
+
+			_ = t.enqueueMessage(execCtx, formatEscapedLines(
+				fmt.Sprintf("✓ Plan %s completed.", approval.ID),
+			))
+		}(copyApproval)
+
+		return formatEscapedLines(fmt.Sprintf("✓ Plan %s approved. Executing.", copyApproval.ID)), nil
+	case "pr":
+		if err := t.markPRApproval(ctx, &copyApproval, true, ""); err != nil {
+			return "", err
+		}
+	case "input":
+		if err := t.resolveInputWithoutText(ctx, &copyApproval); err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("approval type %q is not supported", copyApproval.Type)
 	}
 
 	t.approvalsMu.Lock()
-	approval, ok := t.pendingApprovals[approvalID]
-	if !ok {
-		t.approvalsMu.Unlock()
-		return formatEscapedLines(fmt.Sprintf("❌ Approval no encontrado: %s", approvalID)), nil
-	}
-
-	var err error
-	switch strings.ToLower(strings.TrimSpace(approval.Type)) {
-	case "plan":
-		err = t.executePlanApproval(ctx, approval)
-	case "pr":
-		err = t.markPRApproval(ctx, approval, true, "")
-	case "input":
-		err = t.resolveInputWithoutText(ctx, approval)
-	default:
-		err = fmt.Errorf("approval type %q is not supported", approval.Type)
-	}
-
-	if err == nil {
-		delete(t.pendingApprovals, approvalID)
-	}
+	delete(t.pendingApprovals, approvalID)
 	t.approvalsMu.Unlock()
 
-	if err != nil {
-		return "", err
-	}
-
-	return formatEscapedLines(fmt.Sprintf("✅ Aprobado: %s", approval.Description)), nil
+	return formatEscapedLines(fmt.Sprintf("✓ Approved: %s", copyApproval.Description)), nil
 }
 
 func (t *TelegramBot) cmdReject(ctx context.Context, args string) (string, error) {
 	parts := strings.Fields(strings.TrimSpace(args))
 	if len(parts) == 0 {
-		return formatEscapedLines("Uso: /reject {id} {razon}"), nil
+		return formatEscapedLines("Usage: /reject {id} {reason}"), nil
 	}
 
 	approvalID := parts[0]
-	reason := "sin razon"
+	reason := "no reason provided"
 	if len(parts) > 1 {
 		reason = strings.TrimSpace(strings.Join(parts[1:], " "))
 	}
@@ -592,7 +708,7 @@ func (t *TelegramBot) cmdReject(ctx context.Context, args string) (string, error
 	approval, ok := t.pendingApprovals[approvalID]
 	if !ok {
 		t.approvalsMu.Unlock()
-		return formatEscapedLines(fmt.Sprintf("❌ Approval no encontrado: %s", approvalID)), nil
+		return formatEscapedLines(fmt.Sprintf("✗ Approval not found: %s", approvalID)), nil
 	}
 
 	var err error
@@ -616,13 +732,13 @@ func (t *TelegramBot) cmdReject(ctx context.Context, args string) (string, error
 		return "", err
 	}
 
-	return formatEscapedLines(fmt.Sprintf("❌ Rechazado: %s. Razon: %s", approval.Description, reason)), nil
+	return formatEscapedLines(fmt.Sprintf("✓ Rejected: %s", approval.Description)), nil
 }
 
 func (t *TelegramBot) cmdPause(ctx context.Context, args string) (string, error) {
 	projectRef := strings.TrimSpace(args)
 	if projectRef == "" {
-		return formatEscapedLines("Uso: /pause {proyecto}"), nil
+		return formatEscapedLines("Usage: /pause {project}"), nil
 	}
 	if t.store == nil {
 		return "", fmt.Errorf("state store is not configured")
@@ -658,13 +774,13 @@ func (t *TelegramBot) cmdPause(ctx context.Context, args string) (string, error)
 	}
 	t.setLastProjectRef(projectRef)
 
-	return formatEscapedLines(fmt.Sprintf("⏸ %s pausado. %d workers detenidos.", projectRef, stopped)), nil
+	return formatEscapedLines(fmt.Sprintf("‖ %s paused. %d workers stopped.", projectRef, stopped)), nil
 }
 
 func (t *TelegramBot) cmdResume(ctx context.Context, args string) (string, error) {
 	projectRef := strings.TrimSpace(args)
 	if projectRef == "" {
-		return formatEscapedLines("Uso: /resume {proyecto}"), nil
+		return formatEscapedLines("Usage: /resume {project}"), nil
 	}
 	if t.store == nil {
 		return "", fmt.Errorf("state store is not configured")
@@ -695,18 +811,18 @@ func (t *TelegramBot) cmdResume(ctx context.Context, args string) (string, error
 	}
 	t.setLastProjectRef(projectRef)
 
-	return formatEscapedLines(fmt.Sprintf("▶️ %s reanudado.", projectRef)), nil
+	return formatEscapedLines(fmt.Sprintf("▶ %s resumed.", projectRef)), nil
 }
 
 func (t *TelegramBot) cmdConsult(ctx context.Context, args string) (string, error) {
 	question := strings.TrimSpace(args)
 	if question == "" {
-		return formatEscapedLines("Uso: /consult {pregunta}"), nil
+		return formatEscapedLines("Usage: /consult {question}"), nil
 	}
 
 	consultant := t.selectConsultant()
 	if consultant == nil {
-		return formatEscapedLines("⚠️ No hay consultores disponibles."), nil
+		return formatEscapedLines("‼ No consultants available."), nil
 	}
 
 	consultCtx, projectRef, err := t.buildConsultationContext(ctx)
@@ -719,7 +835,7 @@ func (t *TelegramBot) cmdConsult(ctx context.Context, args string) (string, erro
 		return "", err
 	}
 
-	summary := "sin respuesta"
+	summary := "no response"
 	if opinion != nil {
 		summary = strings.TrimSpace(opinion.Analysis)
 		if summary == "" {
@@ -740,6 +856,41 @@ func (t *TelegramBot) cmdPending(ctx context.Context) string {
 	now := t.nowFn().UTC()
 	t.cleanupExpiredApprovals(now)
 	return FormatPendingApprovalsMessage(t.listApprovals(), now)
+}
+
+func formatPlanSummary(projectRef string, result *planner.PlanResult) string {
+	if result == nil || result.Plan == nil {
+		return formatEscapedLines("✗ Empty plan result.")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("▸ Plan for %s\n", projectRef))
+	sb.WriteString(fmt.Sprintf("Confidence: %.0f%%\n", result.Plan.Confidence*100))
+	if result.ConsultantUsed {
+		sb.WriteString("→ Validated by consultant\n")
+	}
+	sb.WriteString(fmt.Sprintf("Tasks: %d\n\n", len(result.Plan.Tasks)))
+
+	for i, task := range result.Plan.Tasks {
+		title := strings.TrimSpace(task.Title)
+		if title == "" {
+			title = fmt.Sprintf("Task %d", i+1)
+		}
+		description := strings.TrimSpace(task.Description)
+		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, title, description))
+		if len(task.DependsOn) > 0 {
+			sb.WriteString(fmt.Sprintf("   Depends on: %s\n", strings.Join(task.DependsOn, ", ")))
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("\n/approve %s — execute this plan", result.PlanID))
+	sb.WriteString(fmt.Sprintf("\n/reject %s {reason} — discard", result.PlanID))
+
+	return formatEscapedLines(sb.String())
+}
+
+func parseDirectiveRoutingFromArgs(args string) (directive, projectRef string, hasRouting bool) {
+	return directivepkg.ParseRouting(args)
 }
 
 func (t *TelegramBot) executePlanApproval(ctx context.Context, approval *PendingApproval) error {
@@ -766,10 +917,10 @@ func (t *TelegramBot) markPRApproval(ctx context.Context, approval *PendingAppro
 	}
 
 	eventType := "pr_approved"
-	description := fmt.Sprintf("PR aprobado: %s", approval.Description)
+	description := fmt.Sprintf("PR approved: %s", approval.Description)
 	if !approved {
 		eventType = "pr_rejected"
-		description = fmt.Sprintf("PR rechazado: %s. Razon: %s", approval.Description, strings.TrimSpace(reason))
+		description = fmt.Sprintf("PR rejected: %s. Reason: %s", approval.Description, strings.TrimSpace(reason))
 	}
 
 	if err := t.store.AppendEvent(ctx, state.Event{
@@ -820,7 +971,7 @@ func (t *TelegramBot) rejectPlan(ctx context.Context, approval *PendingApproval,
 	return t.store.AppendEvent(ctx, state.Event{
 		ProjectID:   projectID,
 		EventType:   "plan_rejected",
-		Description: fmt.Sprintf("Plan rechazado: %s. Razon: %s", approval.Description, strings.TrimSpace(reason)),
+		Description: fmt.Sprintf("Plan rejected: %s. Reason: %s", approval.Description, strings.TrimSpace(reason)),
 	})
 }
 
@@ -840,7 +991,7 @@ func (t *TelegramBot) resolveInputWithoutText(ctx context.Context, approval *Pen
 	if err := t.store.AppendEvent(ctx, state.Event{
 		ProjectID:   projectID,
 		EventType:   "input_approved",
-		Description: fmt.Sprintf("Input aprobado: %s", approval.Description),
+		Description: fmt.Sprintf("Input approved: %s", approval.Description),
 	}); err != nil {
 		return err
 	}
@@ -864,7 +1015,7 @@ func (t *TelegramBot) rejectInput(ctx context.Context, approval *PendingApproval
 	if err := t.store.AppendEvent(ctx, state.Event{
 		ProjectID:   projectID,
 		EventType:   "input_rejected",
-		Description: fmt.Sprintf("Input rechazado: %s. Razon: %s", approval.Description, strings.TrimSpace(reason)),
+		Description: fmt.Sprintf("Input rejected: %s. Reason: %s", approval.Description, strings.TrimSpace(reason)),
 	}); err != nil {
 		return err
 	}
@@ -889,7 +1040,7 @@ func (t *TelegramBot) resolveInputApproval(ctx context.Context, approval *Pendin
 		if err := t.store.AppendEvent(ctx, state.Event{
 			ProjectID:   projectID,
 			EventType:   "input_response",
-			Description: fmt.Sprintf("%s | respuesta: %s", approval.Description, strings.TrimSpace(response)),
+			Description: fmt.Sprintf("%s | response: %s", approval.Description, strings.TrimSpace(response)),
 		}); err != nil {
 			return err
 		}
@@ -939,7 +1090,7 @@ func (t *TelegramBot) buildConsultationContext(ctx context.Context) (string, str
 	}
 
 	if len(parts) == 0 {
-		parts = append(parts, "Sin contexto adicional disponible")
+		parts = append(parts, "No additional context available")
 	}
 
 	return strings.TrimSpace(strings.Join(parts, "\n\n")), projectRef, nil
@@ -1167,7 +1318,7 @@ func pickProjectRef(global state.GlobalState) string {
 }
 
 func projectContextSummary(detail state.ProjectDetail) string {
-	lastEvent := "sin eventos"
+	lastEvent := "no events"
 	if len(detail.Events) > 0 {
 		lastEvent = strings.TrimSpace(detail.Events[0].Description)
 		if lastEvent == "" {
@@ -1183,7 +1334,7 @@ func projectContextSummary(detail state.ProjectDetail) string {
 	}
 
 	return strings.TrimSpace(fmt.Sprintf(
-		"Proyecto: %s\nEstado: %s\nTareas en curso: %d\nProgreso: %.0f%%\nUltimo evento: %s",
+		"Project: %s\nStatus: %s\nTasks in progress: %d\nProgress: %.0f%%\nLast event: %s",
 		detail.ProjectRef,
 		detail.Project.Status,
 		inProgress,

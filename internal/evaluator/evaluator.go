@@ -46,10 +46,16 @@ type CompletionResult struct {
 	NextSessionID string `json:"next_session_id,omitempty"`
 }
 
+type notifier interface {
+	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
+	NotifyPRReady(ctx context.Context, projectID, prURL, summary, approvalID string) error
+}
+
 type Evaluator struct {
 	glm         evaluatorLLM
 	consultants []llm.ConsultantClient
 	launcher    evaluatorLauncher
+	notifier    notifier
 	db          *state.Store
 	logger      *slog.Logger
 
@@ -88,6 +94,16 @@ func NewWithDeps(
 	}
 }
 
+func (e *Evaluator) SetNotifier(n notifier) {
+	if e == nil {
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.notifier = n
+}
+
 func (e *Evaluator) Evaluate(ctx context.Context, diff, criteria string) (*llm.Evaluation, error) {
 	if e == nil || e.glm == nil {
 		return nil, llm.ErrNotImplemented
@@ -103,6 +119,9 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 	if e.glm == nil {
 		return nil, fmt.Errorf("glm client is not configured")
 	}
+	e.mu.Lock()
+	evalNotifier := e.notifier
+	e.mu.Unlock()
 
 	taskRecord, projectName, err := e.findTaskForSession(ctx, session)
 	if err != nil {
@@ -161,6 +180,18 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 			if updateErr := e.db.UpdateTask(ctx, taskID, state.TaskUpdate{Status: &status}); updateErr != nil {
 				return nil, fmt.Errorf("mark task %d completed: %w", taskID, updateErr)
 			}
+		}
+		if evalNotifier != nil {
+			projectRef := strings.TrimSpace(projectName)
+			if projectRef == "" {
+				projectRef = strconv.FormatInt(taskRecord.ProjectID, 10)
+			}
+			summary := strings.TrimSpace(evaluation.Summary)
+			if summary == "" {
+				summary = fmt.Sprintf("Task '%s' accepted and ready for review", strings.TrimSpace(taskRecord.Title))
+			}
+			approvalID := fmt.Sprintf("pr-%d-%d", taskRecord.ProjectID, taskID)
+			_ = evalNotifier.NotifyPRReady(ctx, projectRef, "", summary, approvalID)
 		}
 	case "iterate":
 		nextRetry := retryCount + 1
@@ -510,7 +541,19 @@ func firstAvailableConsultant(consultants []llm.ConsultantClient) llm.Consultant
 }
 
 func (e *Evaluator) escalateToUser(ctx context.Context, projectID int64, taskID int64, workerID *int64, reason string) error {
+	e.mu.Lock()
+	evalNotifier := e.notifier
+	e.mu.Unlock()
+
 	if e.db == nil {
+		if evalNotifier != nil {
+			projectRef := strconv.FormatInt(projectID, 10)
+			if projectID <= 0 {
+				projectRef = "unknown"
+			}
+			approvalID := fmt.Sprintf("input-%d-%d", projectID, taskID)
+			_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, strings.TrimSpace(reason), approvalID)
+		}
 		return nil
 	}
 
@@ -538,6 +581,17 @@ func (e *Evaluator) escalateToUser(ctx context.Context, projectID int64, taskID 
 		}); err != nil {
 			return fmt.Errorf("append escalation event for project %d: %w", projectID, err)
 		}
+	}
+
+	if evalNotifier != nil {
+		projectRef := strconv.FormatInt(projectID, 10)
+		if projectID > 0 {
+			if project, err := e.db.GetProjectByID(ctx, projectID); err == nil && strings.TrimSpace(project.Name) != "" {
+				projectRef = strings.TrimSpace(project.Name)
+			}
+		}
+		approvalID := fmt.Sprintf("input-%d-%d", projectID, taskID)
+		_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, strings.TrimSpace(reason), approvalID)
 	}
 
 	return nil
