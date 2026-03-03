@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/notify"
 	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 	"gopkg.in/yaml.v3"
@@ -62,6 +64,10 @@ type runtimeConfig struct {
 		Port int    `yaml:"port"`
 		Host string `yaml:"host"`
 	} `yaml:"dashboard"`
+	Telegram struct {
+		BotTokenEnv   string `yaml:"bot_token_env"`
+		AllowedChatID int64  `yaml:"allowed_chat_id"`
+	} `yaml:"telegram"`
 	Database struct {
 		Path string `yaml:"path"`
 	} `yaml:"database"`
@@ -218,6 +224,41 @@ func main() {
 		evaluator: evaluatorService,
 		logger:    logger,
 	})
+
+	telegramTokenEnv := defaultEnvName(cfg.Telegram.BotTokenEnv, "TELEGRAM_BOT_TOKEN")
+	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))
+	telegramChatID := cfg.Telegram.AllowedChatID
+	if rawChatID := strings.TrimSpace(os.Getenv("TELEGRAM_CHAT_ID")); rawChatID != "" {
+		parsedChatID, parseErr := strconv.ParseInt(rawChatID, 10, 64)
+		if parseErr != nil {
+			logger.Warn("invalid TELEGRAM_CHAT_ID, using config value", slog.String("raw_chat_id", rawChatID), slog.Any("error", parseErr))
+		} else {
+			telegramChatID = parsedChatID
+		}
+	}
+
+	var telegramNotifier *notify.TelegramBot
+	if telegramToken != "" && telegramChatID != 0 {
+		telegramNotifier = notify.NewTelegramBot(telegramToken, telegramChatID, plannerService, evaluatorService, store, logger)
+		telegramNotifier.SetWorkerController(launcherService)
+		telegramNotifier.SetConsultants(consultants)
+		if startErr := telegramNotifier.Start(ctx); startErr != nil {
+			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
+			telegramNotifier = nil
+		} else {
+			defer func() {
+				if stopErr := telegramNotifier.Stop(); stopErr != nil && !errors.Is(stopErr, notify.ErrBotNotStarted) {
+					logger.Error("failed to stop telegram notifier", slog.Any("error", stopErr))
+				}
+			}()
+		}
+	} else {
+		logger.Info(
+			"telegram notifier disabled",
+			slog.Bool("token_configured", telegramToken != ""),
+			slog.Int64("allowed_chat_id", telegramChatID),
+		)
+	}
 
 	dcfg := dashboard.DefaultConfig()
 	dcfg.Host = defaultString(cfg.Dashboard.Host, "0.0.0.0")
@@ -452,6 +493,8 @@ func defaultRuntimeConfig() runtimeConfig {
 
 	cfg.Dashboard.Host = "0.0.0.0"
 	cfg.Dashboard.Port = 8080
+	cfg.Telegram.BotTokenEnv = "TELEGRAM_BOT_TOKEN"
+	cfg.Telegram.AllowedChatID = 0
 
 	cfg.Database.Path = "./hivemind.db"
 	cfg.Git.DefaultRemote = "origin"
