@@ -41,6 +41,9 @@ WORKDIR /app
 
 COPY --from=builder /out/orchestrator /app/orchestrator
 COPY prompts /app/prompts
+COPY agents /app/agents
+COPY templates /app/templates
+RUN mkdir -p /app/sessions/cache
 
 EXPOSE 8080
 ENTRYPOINT ["/app/orchestrator"]

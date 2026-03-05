@@ -10,12 +10,38 @@ metadata:
   namespace: hivemind
 data:
   config.yaml: |
-    app:
-      name: hivemind
-      log_level: info
+    glm:
+      api_key_env: ZAI_API_KEY
+      model: glm-4.7
+      base_url: https://open.bigmodel.cn/api/coding/paas/v4/chat/completions
+      timeout: 60s
+    consultants:
+      claude:
+        enabled: true
+        api_key_env: ANTHROPIC_API_KEY
+        model: claude-sonnet-4-5-20250929
+        max_monthly_budget_usd: 10.0
+        max_calls_per_day: 50
+      gemini:
+        enabled: true
+        api_key_env: GOOGLE_AI_API_KEY
+        model: gemini-2.5-flash
+        max_calls_per_day: 100
+    codex:
+      approval_mode: full-auto
+      timeout_minutes: 30
+      repos_dir: /app/repos
+    telegram:
+      bot_token_env: TELEGRAM_BOT_TOKEN
+      allowed_chat_id: 0
     dashboard:
       host: 0.0.0.0
       port: 8080
+    database:
+      path: /data/hivemind.db
+    git:
+      default_remote: origin
+      branch_prefix: "feature/"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
