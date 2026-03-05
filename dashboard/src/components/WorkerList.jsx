@@ -1,38 +1,40 @@
+import SectionHeader from './SectionHeader';
+
 function formatRelativeTime(dateValue) {
   if (!dateValue) {
-    return '-';
+    return '--';
   }
 
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) {
-    return '-';
+    return '--';
   }
 
   const diffMs = Date.now() - date.getTime();
   const diffMin = Math.max(0, Math.floor(diffMs / 60000));
 
   if (diffMin < 1) {
-    return '<1 min';
+    return '<1m';
   }
   if (diffMin < 60) {
-    return `${diffMin} min`;
+    return `${diffMin}m`;
   }
 
   const diffHours = Math.floor(diffMin / 60);
   if (diffHours < 24) {
-    return `${diffHours} h`;
+    return `${diffHours}h`;
   }
 
   const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays} d`;
+  return `${diffDays}d`;
 }
 
-const statusBadge = {
-  running: 'bg-hivemind-green/15 text-hivemind-green border-hivemind-green/30',
-  paused: 'bg-hivemind-gray/15 text-hivemind-gray border-hivemind-gray/30',
-  completed: 'bg-hivemind-blue/15 text-hivemind-blue border-hivemind-blue/30',
-  blocked: 'bg-hivemind-red/15 text-hivemind-red border-hivemind-red/30',
-  failed: 'bg-hivemind-red/15 text-hivemind-red border-hivemind-red/30'
+const statusDot = {
+  running: 'bg-hivemind-green',
+  paused: 'bg-hivemind-gray',
+  completed: 'bg-hivemind-blue',
+  blocked: 'bg-hivemind-red',
+  failed: 'bg-hivemind-red'
 };
 
 export default function WorkerList({ workers }) {
@@ -43,53 +45,40 @@ export default function WorkerList({ workers }) {
   });
 
   return (
-    <section className="rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-lg font-bold text-hivemind-text">Workers Activos Globales</h2>
-        <span className="text-sm text-hivemind-muted">{sortedWorkers.length}</span>
-      </div>
+    <section className="flex h-full flex-col bg-hivemind-surface px-3 py-2">
+      <SectionHeader label="WORKERS" count={sortedWorkers.length} color="hivemind-blue" />
 
       {sortedWorkers.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-slate-600 p-4 text-sm text-hivemind-muted">
-          No hay workers activos
+        <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+          No active workers
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
-            <thead className="text-xs uppercase tracking-wide text-hivemind-muted">
-              <tr className="border-b border-slate-700">
-                <th className="px-3 py-2">Proyecto</th>
-                <th className="px-3 py-2">Tarea</th>
-                <th className="px-3 py-2">Rama</th>
-                <th className="px-3 py-2">Tiempo activo</th>
-                <th className="px-3 py-2">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedWorkers.map((worker) => (
-                <tr
-                  key={worker.id}
-                  className="border-b border-slate-800 last:border-b-0 hover:bg-slate-700/20"
-                >
-                  <td className="px-3 py-3 font-medium text-hivemind-text">
+        <div className="mt-1">
+          {sortedWorkers.map((worker) => {
+            const dotClass = statusDot[worker.status] ?? 'bg-hivemind-muted';
+
+            return (
+              <article key={worker.id} className="border-b border-hivemind-border px-1 py-2 last:border-b-0">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 truncate text-[10px] font-semibold text-hivemind-text">
                     {worker.project_name ?? worker.project_id}
-                  </td>
-                  <td className="max-w-[280px] truncate px-3 py-3 text-hivemind-muted" title={worker.task_description}>
-                    {worker.task_description}
-                  </td>
-                  <td className="px-3 py-3 font-mono text-xs text-hivemind-muted">{worker.branch}</td>
-                  <td className="px-3 py-3 text-hivemind-muted">{formatRelativeTime(worker.started_at)}</td>
-                  <td className="px-3 py-3">
-                    <span
-                      className={`rounded-full border px-2 py-1 text-xs font-semibold ${statusBadge[worker.status] ?? statusBadge.paused}`}
-                    >
-                      {worker.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </p>
+                  <p className="shrink-0 text-[9px] text-hivemind-dim">{formatRelativeTime(worker.started_at)}</p>
+                </div>
+
+                <p className="mt-1 truncate text-[10px] text-hivemind-muted" title={worker.task_description}>
+                  {worker.task_description}
+                </p>
+
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="min-w-0 truncate text-[9px] text-hivemind-dim" title={worker.branch}>
+                    {worker.branch}
+                  </p>
+                  <span className={`h-1 w-1 shrink-0 ${dotClass}`} aria-hidden="true" />
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>

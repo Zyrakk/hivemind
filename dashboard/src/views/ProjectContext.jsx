@@ -1,63 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, NavLink, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import AlertBanner from '../components/AlertBanner';
 import ArchitectureDecisions from '../components/ArchitectureDecisions';
 import ContributeNow from '../components/ContributeNow';
 import LastSession from '../components/LastSession';
 import QuickLinks from '../components/QuickLinks';
+import SystemFooter from '../components/SystemFooter';
+import { getProjectStatus } from '../components/statusSystem';
 import { getMockProjectDetail } from '../mockData';
+import { ProjectCarbonHeader } from './ProjectDetail';
 
 const POLL_INTERVAL_MS = 30000;
-
-const projectStatusStyles = {
-  working: 'text-hivemind-green bg-hivemind-green/10 border-hivemind-green/30',
-  needs_input: 'text-hivemind-yellow bg-hivemind-yellow/10 border-hivemind-yellow/30',
-  pending_review: 'text-hivemind-blue bg-hivemind-blue/10 border-hivemind-blue/30',
-  blocked: 'text-hivemind-red bg-hivemind-red/10 border-hivemind-red/30',
-  paused: 'text-hivemind-gray bg-hivemind-gray/10 border-hivemind-gray/30'
-};
-
-// Expected backend payload extension for GET /api/project/{id}
-// {
-//   "context": {
-//     "summary": "string",
-//     "architecture_decisions": [
-//       { "id": "string", "title": "string", "description": "string", "type": "database|api|structure|security" }
-//     ],
-//     "last_session": {
-//       "date": "ISO-8601",
-//       "task": "string",
-//       "result": "success|partial|failed",
-//       "did": ["string"],
-//       "pending": ["string"]
-//     },
-//     "quick_links": {
-//       "repository": "url",
-//       "open_prs": "url",
-//       "agents_md": "url",
-//       "active_branch": { "name": "string", "url": "url" }
-//     },
-//     "contribute_now": ["string"]
-//   }
-// }
-
-function formatStatusLabel(status) {
-  return String(status || 'unknown')
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, (match) => match.toUpperCase());
-}
-
-function formatLastUpdated(dateValue) {
-  if (!dateValue) {
-    return '--:--:--';
-  }
-
-  return new Intl.DateTimeFormat('es-ES', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  }).format(dateValue);
-}
 
 function normalizeQuickLinks(quickLinks, fallback) {
   const source = quickLinks && typeof quickLinks === 'object' ? quickLinks : {};
@@ -104,7 +57,7 @@ function normalizeArchitectureDecisions(decisions, fallback) {
     return {
       id: item.id ?? `decision-${index}`,
       title: item.title ?? item.decision ?? `Decision ${index + 1}`,
-      description: item.description ?? item.reason ?? 'Sin detalle',
+      description: item.description ?? item.reason ?? 'No detail available',
       type: item.type ?? 'structure'
     };
   });
@@ -124,7 +77,7 @@ function normalizeLastSession(lastSession, fallback) {
 
   return {
     date: source.date ?? source.timestamp ?? null,
-    task: source.task ?? source.title ?? 'Sesion sin titulo',
+    task: source.task ?? source.title ?? 'Untitled session',
     result: source.result ?? source.status ?? 'partial',
     did: Array.isArray(source.did) ? source.did : Array.isArray(source.done) ? source.done : [],
     pending: Array.isArray(source.pending)
@@ -166,13 +119,20 @@ function normalizeProjectContext(payload, projectID, mockDetail) {
   const contextSource = source.context && typeof source.context === 'object' ? source.context : {};
   const contextFallback = mockDetail?.context && typeof mockDetail.context === 'object' ? mockDetail.context : {};
 
+  const recentEvents = Array.isArray(source.recent_events)
+    ? source.recent_events
+    : Array.isArray(mockDetail?.recent_events)
+      ? mockDetail.recent_events
+      : [];
+
   return {
     project,
+    recent_events: recentEvents,
     context: {
       summary:
         contextSource.summary ??
         contextFallback.summary ??
-        'Sin resumen ejecutivo disponible para este proyecto.',
+        'No executive summary available for this project.',
       architecture_decisions: normalizeArchitectureDecisions(
         contextSource.architecture_decisions,
         contextFallback.architecture_decisions
@@ -187,19 +147,29 @@ function normalizeProjectContext(payload, projectID, mockDetail) {
   };
 }
 
-function MobileCollapsibleSection({ title, children, defaultOpen = false }) {
+function MobileCollapsibleSection({ title, count, defaultOpen = false, children }) {
   return (
     <>
-      <section className="rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel md:hidden">
-        <details open={defaultOpen}>
-          <summary className="cursor-pointer text-base font-bold text-hivemind-text">{title}</summary>
-          <div className="mt-3">{children}</div>
+      <section className="md:hidden">
+        <details open={defaultOpen} className="group border border-hivemind-border bg-hivemind-surface">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[9px] uppercase tracking-[0.1em] text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0">
+            <span className="text-hivemind-dim group-open:hidden">▸</span>
+            <span className="hidden text-hivemind-dim group-open:inline">▾</span>
+            <span>{title}</span>
+            {typeof count === 'number' ? <span className="text-hivemind-dim">[{count}]</span> : null}
+          </summary>
+          <div className="border-t border-hivemind-border px-3 py-2">{children}</div>
         </details>
       </section>
 
-      <section className="hidden rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel md:block">
-        <h2 className="text-lg font-bold text-hivemind-text">{title}</h2>
-        <div className="mt-3">{children}</div>
+      <section className="hidden bg-hivemind-surface px-3 py-2.5 md:block">
+        <div className="flex items-center gap-1">
+          <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">{title}</span>
+          {typeof count === 'number' ? (
+            <span className="text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">[{count}]</span>
+          ) : null}
+        </div>
+        <div className="mt-2">{children}</div>
       </section>
     </>
   );
@@ -272,99 +242,64 @@ export default function ProjectContext({ apiBaseURL }) {
     };
   }, [apiBaseURL, id]);
 
-  const projectStatusClass = useMemo(
-    () => projectStatusStyles[data.project.status] ?? projectStatusStyles.paused,
-    [data.project.status]
-  );
+  const projectStatus = useMemo(() => getProjectStatus(data.project.status), [data.project.status]);
+  const latestEvent = data.recent_events[0] ?? null;
 
   return (
-    <div className="min-h-screen bg-hivemind-bg text-hivemind-text">
-      <header className="sticky top-0 z-20 border-b border-slate-700 bg-hivemind-bg/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => navigate(`/project/${id}`)}
-              className="rounded-md border border-slate-600 px-3 py-1.5 text-sm text-hivemind-muted transition hover:border-slate-500 hover:text-hivemind-text"
-            >
-              {'<'} Volver
-            </button>
-            <p className="text-xs text-hivemind-muted">
-              Ultima actualizacion: <span className="text-hivemind-text">{formatLastUpdated(lastUpdated)}</span>
-            </p>
-          </div>
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+      <ProjectCarbonHeader
+        id={id}
+        projectName={data.project.name}
+        projectStatus={projectStatus}
+        connectionError={connectionError}
+        lastUpdated={lastUpdated}
+        latestEvent={latestEvent}
+        eventCount={data.recent_events.length}
+        onBack={() => navigate(`/project/${id}`)}
+      />
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-black tracking-tight">{data.project.name}</h1>
-            <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${projectStatusClass}`}>
-              {formatStatusLabel(data.project.status)}
-            </span>
-          </div>
-
-          <nav className="flex flex-wrap items-center gap-2 text-sm">
-            <Link
-              className="rounded-md border border-slate-600 px-3 py-1.5 text-hivemind-muted transition hover:border-slate-500 hover:text-hivemind-text"
-              to="/"
-            >
-              Dashboard
-            </Link>
-            <NavLink
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 font-medium transition ${
-                  isActive
-                    ? 'bg-hivemind-blue/20 text-hivemind-blue'
-                    : 'border border-slate-600 text-hivemind-muted hover:border-slate-500 hover:text-hivemind-text'
-                }`
-              }
-              to={`/project/${id}`}
-              end
-            >
-              Progreso
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 font-medium transition ${
-                  isActive
-                    ? 'bg-hivemind-blue/20 text-hivemind-blue'
-                    : 'border border-slate-600 text-hivemind-muted hover:border-slate-500 hover:text-hivemind-text'
-                }`
-              }
-              to={`/project/${id}/context`}
-            >
-              Contexto
-            </NavLink>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
-        {connectionError ? <AlertBanner variant="error" message="Sin conexion con el orquestador" /> : null}
+      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
+        {connectionError ? <AlertBanner variant="error" message="No connection to the orchestrator" /> : null}
 
         {loading ? (
-          <section className="rounded-xl border border-slate-700 bg-hivemind-card p-6 shadow-panel">
-            <p className="text-sm text-hivemind-muted">Cargando contexto del proyecto...</p>
+          <section className="bg-hivemind-surface px-3 py-3">
+            <p className="border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+              Loading context stream...
+            </p>
           </section>
         ) : null}
 
-        <section className="rounded-xl border border-slate-700 bg-slate-800/80 p-5 shadow-panel">
-          <h2 className="text-xl font-bold text-hivemind-text">Resumen Ejecutivo</h2>
-          <p className="mt-3 text-sm leading-relaxed text-hivemind-muted">{data.context.summary}</p>
+        <section className="grid gap-px md:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="flex min-w-0 flex-col gap-px">
+            <section className="bg-hivemind-surface px-3 py-2.5">
+              <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">BRIEFING</span>
+              <p className="mt-2 text-[10px] leading-[1.6] text-hivemind-muted">{data.context.summary}</p>
+            </section>
+
+            <MobileCollapsibleSection
+              title="ARCHITECTURE"
+              count={data.context.architecture_decisions.length}
+              defaultOpen
+            >
+              <ArchitectureDecisions decisions={data.context.architecture_decisions} />
+            </MobileCollapsibleSection>
+
+            <ContributeNow content={data.context.contribute_now} />
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-px">
+            <MobileCollapsibleSection title="LINKS" defaultOpen>
+              <QuickLinks quickLinks={data.context.quick_links} />
+            </MobileCollapsibleSection>
+
+            <MobileCollapsibleSection title="LAST SESSION" defaultOpen>
+              <LastSession lastSession={data.context.last_session} />
+            </MobileCollapsibleSection>
+          </div>
         </section>
-
-        <MobileCollapsibleSection title="Decisiones de Arquitectura" defaultOpen>
-          <ArchitectureDecisions decisions={data.context.architecture_decisions} />
-        </MobileCollapsibleSection>
-
-        <MobileCollapsibleSection title="Ultima Sesion de Trabajo">
-          <LastSession lastSession={data.context.last_session} />
-        </MobileCollapsibleSection>
-
-        <MobileCollapsibleSection title="Quick Links">
-          <QuickLinks quickLinks={data.context.quick_links} />
-        </MobileCollapsibleSection>
-
-        <ContributeNow content={data.context.contribute_now} />
       </main>
+
+      <SystemFooter />
     </div>
   );
 }

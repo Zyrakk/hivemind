@@ -1,10 +1,26 @@
 import { useMemo, useState } from 'react';
 
 const typeStyles = {
-  database: { icon: 'DB', color: 'text-hivemind-blue', badge: 'bg-hivemind-blue/15 border-hivemind-blue/30' },
-  api: { icon: 'API', color: 'text-hivemind-green', badge: 'bg-hivemind-green/15 border-hivemind-green/30' },
-  structure: { icon: 'ARCH', color: 'text-hivemind-yellow', badge: 'bg-hivemind-yellow/15 border-hivemind-yellow/30' },
-  security: { icon: 'SEC', color: 'text-hivemind-red', badge: 'bg-hivemind-red/15 border-hivemind-red/30' }
+  database: {
+    code: 'DB',
+    left: 'border-l-hivemind-green',
+    badge: 'bg-hivemind-green/[0.08] text-hivemind-green'
+  },
+  api: {
+    code: 'API',
+    left: 'border-l-hivemind-blue',
+    badge: 'bg-hivemind-blue/[0.08] text-hivemind-blue'
+  },
+  structure: {
+    code: 'STR',
+    left: 'border-l-hivemind-yellow',
+    badge: 'bg-hivemind-yellow/[0.08] text-hivemind-yellow'
+  },
+  security: {
+    code: 'SEC',
+    left: 'border-l-hivemind-red',
+    badge: 'bg-hivemind-red/[0.08] text-hivemind-red'
+  }
 };
 
 export default function ArchitectureDecisions({ decisions }) {
@@ -12,32 +28,38 @@ export default function ArchitectureDecisions({ decisions }) {
   const [openID, setOpenID] = useState(() => normalized[0]?.id ?? null);
 
   if (normalized.length === 0) {
-    return <p className="text-sm text-hivemind-muted">No hay decisiones registradas</p>;
+    return <p className="border border-dashed border-hivemind-border px-3 py-3 text-[9px] text-hivemind-dim">No architecture decisions recorded</p>;
   }
 
   return (
-    <div className="space-y-3">
+    <div className="border-t border-hivemind-border">
       {normalized.map((decision) => {
         const style = typeStyles[decision.type] ?? typeStyles.structure;
         const isOpen = openID === decision.id;
 
         return (
-          <article key={decision.id} className="rounded-lg border border-slate-700 bg-slate-800/50 p-3">
+          <article key={decision.id} className="border-b border-hivemind-border py-1.5">
             <button
               type="button"
               onClick={() => setOpenID((current) => (current === decision.id ? null : decision.id))}
-              className="flex w-full items-start justify-between gap-3 text-left"
+              className="w-full cursor-pointer border-l-2 px-2 py-1 text-left transition-colors duration-150 hover:bg-hivemind-border/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
+              style={{ borderLeftColor: style.code === 'DB' ? '#5fba7d' : style.code === 'API' ? '#6b8fc7' : style.code === 'STR' ? '#d4a843' : '#c75a5a' }}
             >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-hivemind-text">{decision.title}</p>
-                <p className="mt-1 text-xs text-hivemind-muted">{decision.type ?? 'structure'}</p>
-              </div>
-              <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${style.badge} ${style.color}`}>
-                {style.icon}
+              <span className="flex items-center gap-2">
+                <span className={`px-[5px] py-[1px] text-[8px] font-semibold uppercase tracking-[0.08em] ${style.badge}`}>
+                  {style.code}
+                </span>
+                <span className="min-w-0 truncate text-[10px] font-medium text-hivemind-text">{decision.title}</span>
               </span>
             </button>
 
-            {isOpen ? <p className="mt-3 text-sm text-hivemind-muted">{decision.description}</p> : null}
+            <div
+              className={`overflow-hidden pl-[10px] transition-[max-height] duration-150 ${
+                isOpen ? 'max-h-[140px]' : 'max-h-0'
+              }`}
+            >
+              <p className="mt-1 text-[9px] leading-relaxed text-hivemind-muted">{decision.description}</p>
+            </div>
           </article>
         );
       })}

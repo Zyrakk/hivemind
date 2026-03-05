@@ -21,30 +21,34 @@ function normalizeProgress(progress) {
   return clamp(progress);
 }
 
-function colorClass(percent) {
+function colorToken(percent) {
   if (percent < 30) {
-    return 'bg-hivemind-red';
+    return '#c75a5a';
   }
   if (percent <= 70) {
-    return 'bg-hivemind-yellow';
+    return '#d4a843';
   }
-  return 'bg-hivemind-green';
+  return '#5fba7d';
 }
 
 export default function ProgressBar({ label, progress }) {
   const percent = Math.round(normalizeProgress(progress));
+  const color = colorToken(percent);
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3 text-sm">
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-3 text-[10px]">
         <p className="truncate font-medium text-hivemind-text">{label}</p>
-        <p className="font-semibold text-hivemind-muted">{percent}%</p>
+        <p className="tabular-nums text-hivemind-dim">{String(percent).padStart(2, '0')}%</p>
       </div>
 
-      <div className="h-3 w-full overflow-hidden rounded-full bg-slate-700">
+      <div className="h-[3px] w-full bg-hivemind-border">
         <div
-          className={`h-full rounded-full transition-all duration-700 ease-out ${colorClass(percent)}`}
-          style={{ width: `${percent}%` }}
+          className="h-full transition-all duration-700 ease-out"
+          style={{
+            width: `${percent}%`,
+            backgroundColor: color
+          }}
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}

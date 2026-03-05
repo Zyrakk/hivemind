@@ -1,27 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, NavLink, useNavigate, useParams } from 'react-router-dom';
+import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import AlertBanner from '../components/AlertBanner';
+import FlashTicker from '../components/FlashTicker';
 import MilestoneRoadmap from '../components/MilestoneRoadmap';
 import ProgressBar from '../components/ProgressBar';
+import SystemFooter from '../components/SystemFooter';
 import TaskList from '../components/TaskList';
 import Timeline from '../components/Timeline';
+import { getProjectStatus } from '../components/statusSystem';
 import { getMockProjectDetail } from '../mockData';
 
 const POLL_INTERVAL_MS = 30000;
-
-const projectStatusStyles = {
-  working: 'text-hivemind-green bg-hivemind-green/10 border-hivemind-green/30',
-  needs_input: 'text-hivemind-yellow bg-hivemind-yellow/10 border-hivemind-yellow/30',
-  pending_review: 'text-hivemind-blue bg-hivemind-blue/10 border-hivemind-blue/30',
-  blocked: 'text-hivemind-red bg-hivemind-red/10 border-hivemind-red/30',
-  paused: 'text-hivemind-gray bg-hivemind-gray/10 border-hivemind-gray/30'
-};
-
-function formatStatusLabel(status) {
-  return String(status || 'unknown')
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, (match) => match.toUpperCase());
-}
 
 function normalizeProjectDetail(payload, fallbackID) {
   const base = payload && typeof payload === 'object' ? payload : {};
@@ -54,15 +43,44 @@ function formatLastUpdated(dateValue) {
     return '--:--:--';
   }
 
-  return new Intl.DateTimeFormat('es-ES', {
+  return new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit'
   }).format(dateValue);
 }
 
+function formatRelativeTime(dateValue) {
+  if (!dateValue) {
+    return '--';
+  }
+
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return '--';
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.max(0, Math.floor(diffMs / 60000));
+
+  if (diffMin < 1) {
+    return '<1m';
+  }
+  if (diffMin < 60) {
+    return `${diffMin}m`;
+  }
+
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d`;
+}
+
 function formatETA(date) {
-  return new Intl.DateTimeFormat('es-ES', {
+  return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
     month: 'short'
   }).format(date);
@@ -98,16 +116,139 @@ function buildMilestones(detail) {
       eta: formatETA(now)
     },
     {
-      name: 'Implementacion',
+      name: 'Implementation',
       status: 'in_progress',
       eta: formatETA(new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000))
     },
     {
-      name: 'Revision',
+      name: 'Review',
       status: 'pending',
       eta: formatETA(new Date(now.getTime() + 6 * 24 * 60 * 60 * 1000))
     }
   ];
+}
+
+function withAlpha(hex, alpha) {
+  const normalized = hex.replace('#', '');
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function workerStatusSquare(status) {
+  if (status === 'running') {
+    return 'bg-hivemind-green';
+  }
+  if (status === 'failed' || status === 'blocked') {
+    return 'bg-hivemind-red';
+  }
+  if (status === 'completed') {
+    return 'bg-hivemind-blue';
+  }
+  return 'bg-hivemind-gray';
+}
+
+export function ProjectCarbonHeader({
+  id,
+  projectName,
+  projectStatus,
+  connectionError,
+  lastUpdated,
+  latestEvent,
+  eventCount,
+  onBack
+}) {
+  return (
+    <header className="sticky top-0 z-30">
+      <div className="border-b border-hivemind-border bg-[#141414]">
+        <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between px-4 py-1.5 text-[9px] sm:px-5">
+          <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
+            <button
+              type="button"
+              onClick={onBack}
+              className="cursor-pointer text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
+            >
+              &lt; BACK
+            </button>
+            <span className="text-hivemind-dim">|</span>
+            <span className="text-[11px] font-bold text-hivemind-text">HIVEMIND</span>
+            <span className="text-hivemind-dim">|</span>
+            <span className="text-hivemind-dim">k3s</span>
+            <span className="text-hivemind-dim">|</span>
+            <span className={connectionError ? 'text-hivemind-yellow' : 'text-hivemind-green'}>
+              {connectionError ? 'WARN' : 'CONN'}
+            </span>
+          </div>
+
+          <span className="tabular-nums text-hivemind-muted">{formatLastUpdated(lastUpdated)}</span>
+        </div>
+      </div>
+
+      <FlashTicker event={latestEvent} eventCount={eventCount} />
+
+      <div className="border-b border-hivemind-border bg-hivemind-surface">
+        <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between gap-2 px-4 py-2 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2">
+            <h1 className="truncate text-[14px] font-bold text-hivemind-text">{projectName}</h1>
+            <span
+              className="shrink-0 px-2 py-[2px] text-[9px] font-semibold uppercase"
+              style={{
+                border: `1px solid ${withAlpha(projectStatus.hex, 0.3)}`,
+                backgroundColor: withAlpha(projectStatus.hex, 0.08),
+                color: projectStatus.hex
+              }}
+            >
+              {projectStatus.label}
+            </span>
+          </div>
+
+          <nav className="flex items-center gap-px">
+            <NavLink
+              to={`/project/${id}`}
+              end
+              className={({ isActive }) =>
+                `cursor-pointer px-3 py-1 text-[9px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
+                  isActive
+                    ? 'border border-transparent text-hivemind-text'
+                    : 'border border-hivemind-border text-hivemind-muted hover:text-hivemind-text'
+                }`
+              }
+              style={({ isActive }) =>
+                isActive
+                  ? {
+                      backgroundColor: withAlpha(projectStatus.hex, 0.1)
+                    }
+                  : undefined
+              }
+            >
+              PROGRESS
+            </NavLink>
+            <NavLink
+              to={`/project/${id}/context`}
+              className={({ isActive }) =>
+                `cursor-pointer px-3 py-1 text-[9px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
+                  isActive
+                    ? 'border border-transparent text-hivemind-text'
+                    : 'border border-hivemind-border text-hivemind-muted hover:text-hivemind-text'
+                }`
+              }
+              style={({ isActive }) =>
+                isActive
+                  ? {
+                      backgroundColor: withAlpha(projectStatus.hex, 0.1)
+                    }
+                  : undefined
+              }
+            >
+              CONTEXT
+            </NavLink>
+          </nav>
+        </div>
+      </div>
+    </header>
+  );
 }
 
 async function fetchProjectDetail(apiBaseURL, projectID, signal) {
@@ -188,101 +329,110 @@ export default function ProjectDetail({ apiBaseURL }) {
     return [{ name: 'Overall', progress: detail.progress.overall }];
   }, [detail]);
 
-  const projectStatusClass = projectStatusStyles[detail.project.status] ?? projectStatusStyles.paused;
+  const projectStatus = getProjectStatus(detail.project.status);
+  const latestEvent = detail.recent_events[0] ?? null;
 
   return (
-    <div className="min-h-screen bg-hivemind-bg text-hivemind-text">
-      <header className="sticky top-0 z-20 border-b border-slate-700 bg-hivemind-bg/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className="rounded-md border border-slate-600 px-3 py-1.5 text-sm text-hivemind-muted transition hover:border-slate-500 hover:text-hivemind-text"
-            >
-              {'<'} Volver
-            </button>
-            <p className="text-xs text-hivemind-muted">
-              Ultima actualizacion: <span className="text-hivemind-text">{formatLastUpdated(lastUpdated)}</span>
-            </p>
-          </div>
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+      <ProjectCarbonHeader
+        id={id}
+        projectName={detail.project.name}
+        projectStatus={projectStatus}
+        connectionError={connectionError}
+        lastUpdated={lastUpdated}
+        latestEvent={latestEvent}
+        eventCount={detail.recent_events.length}
+        onBack={() => navigate('/')}
+      />
 
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h1 className="text-2xl font-black tracking-tight">{detail.project.name}</h1>
-            <span className={`rounded-full border px-3 py-1 text-sm font-semibold ${projectStatusClass}`}>
-              {formatStatusLabel(detail.project.status)}
-            </span>
-          </div>
-
-          <nav className="flex flex-wrap items-center gap-2 text-sm">
-            <Link
-              className="rounded-md border border-slate-600 px-3 py-1.5 text-hivemind-muted transition hover:border-slate-500 hover:text-hivemind-text"
-              to="/"
-            >
-              Dashboard
-            </Link>
-            <NavLink
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 font-medium transition ${
-                  isActive
-                    ? 'bg-hivemind-blue/20 text-hivemind-blue'
-                    : 'border border-slate-600 text-hivemind-muted hover:border-slate-500 hover:text-hivemind-text'
-                }`
-              }
-              to={`/project/${id}`}
-              end
-            >
-              Progreso
-            </NavLink>
-            <NavLink
-              className={({ isActive }) =>
-                `rounded-md px-3 py-1.5 font-medium transition ${
-                  isActive
-                    ? 'bg-hivemind-blue/20 text-hivemind-blue'
-                    : 'border border-slate-600 text-hivemind-muted hover:border-slate-500 hover:text-hivemind-text'
-                }`
-              }
-              to={`/project/${id}/context`}
-            >
-              Contexto
-            </NavLink>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
-        {connectionError ? <AlertBanner variant="error" message="Sin conexion con el orquestador" /> : null}
+      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
+        {connectionError ? <AlertBanner variant="error" message="No connection to the orchestrator" /> : null}
 
         {loading ? (
-          <section className="rounded-xl border border-slate-700 bg-hivemind-card p-6 shadow-panel">
-            <p className="text-sm text-hivemind-muted">Cargando detalle del proyecto...</p>
+          <section className="bg-hivemind-surface px-3 py-3">
+            <p className="border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+              Loading project telemetry...
+            </p>
           </section>
         ) : null}
 
-        <MilestoneRoadmap milestones={milestones} />
+        <section className="grid gap-px md:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex min-w-0 flex-col gap-px">
+            <MilestoneRoadmap milestones={milestones} />
 
-        <section className="rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-bold text-hivemind-text">Progreso por Workstream</h2>
-            <p className="text-sm text-hivemind-muted">
-              Overall: <span className="font-semibold text-hivemind-text">{Math.round((detail.progress.overall ?? 0) * 100)}%</span>
-            </p>
+            <section className="bg-hivemind-surface px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">PROGRESS</span>
+                <span className="text-[10px] text-hivemind-muted">
+                  Overall: <span className="tabular-nums">{Math.round((detail.progress.overall ?? 0) * 100)}%</span>
+                </span>
+              </div>
+
+              <div className="mt-2 space-y-2">
+                {progressBars.map((stream) => (
+                  <ProgressBar key={stream.name} label={stream.name} progress={stream.progress} />
+                ))}
+              </div>
+            </section>
+
+            <TaskList tasks={detail.tasks} workers={detail.workers} />
           </div>
-          <div className="space-y-4">
-            {progressBars.map((stream) => (
-              <ProgressBar
-                key={stream.name}
-                label={stream.name}
-                progress={stream.progress}
-              />
-            ))}
-          </div>
+
+          <aside className="flex min-w-0 flex-col gap-px">
+            <section className="bg-hivemind-surface px-3 py-2">
+              <div className="flex items-center gap-1">
+                <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">WORKERS</span>
+                <span className="text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">[{detail.workers.length}]</span>
+              </div>
+
+              {detail.workers.length === 0 ? (
+                <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+                  No active workers
+                </p>
+              ) : (
+                <div className="mt-1">
+                  {detail.workers.map((worker) => (
+                    <article key={worker.id} className="border-b border-hivemind-border py-2 last:border-b-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-[10px] font-semibold text-hivemind-text">
+                          {worker.project_name ?? worker.session_id ?? worker.project_id ?? `worker-${worker.id}`}
+                        </p>
+                        <p className="shrink-0 text-[9px] text-hivemind-dim tabular-nums">
+                          {formatRelativeTime(worker.started_at)}
+                        </p>
+                      </div>
+
+                      <p
+                        className="mt-1 text-[9px] text-hivemind-muted"
+                        style={{
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical'
+                        }}
+                        title={worker.task_description}
+                      >
+                        {worker.task_description ?? 'No task description'}
+                      </p>
+
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-[8px] text-hivemind-dim" title={worker.branch}>
+                          {worker.branch ?? '--'}
+                        </p>
+                        <span className={`h-1 w-1 shrink-0 ${workerStatusSquare(worker.status)}`} />
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <Timeline events={detail.recent_events} />
+          </aside>
         </section>
-
-        <TaskList tasks={detail.tasks} workers={detail.workers} />
-
-        <Timeline events={detail.recent_events} />
       </main>
+
+      <SystemFooter />
     </div>
   );
 }

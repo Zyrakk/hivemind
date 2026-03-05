@@ -1,14 +1,16 @@
+import SectionHeader from './SectionHeader';
+
 const statusStyles = {
   completed: {
-    dot: 'bg-hivemind-green border-hivemind-green',
-    text: 'text-hivemind-green'
+    node: 'bg-hivemind-green border-hivemind-green',
+    text: 'text-hivemind-text'
   },
   in_progress: {
-    dot: 'bg-hivemind-yellow border-hivemind-yellow',
+    node: 'bg-hivemind-yellow border-hivemind-yellow',
     text: 'text-hivemind-yellow'
   },
   pending: {
-    dot: 'bg-slate-700 border-slate-500',
+    node: 'border-hivemind-dim bg-transparent',
     text: 'text-hivemind-muted'
   }
 };
@@ -30,9 +32,11 @@ function currentMilestoneIndex(milestones) {
 export default function MilestoneRoadmap({ milestones }) {
   if (!Array.isArray(milestones) || milestones.length === 0) {
     return (
-      <section className="rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel">
-        <h2 className="text-lg font-bold text-hivemind-text">Roadmap</h2>
-        <p className="mt-3 text-sm text-hivemind-muted">No hay milestones definidos</p>
+      <section className="bg-hivemind-surface px-3 py-2.5">
+        <SectionHeader label="MILESTONES" color="hivemind-green" />
+        <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+          No milestones defined
+        </p>
       </section>
     );
   }
@@ -40,50 +44,46 @@ export default function MilestoneRoadmap({ milestones }) {
   const currentIndex = currentMilestoneIndex(milestones);
 
   return (
-    <section className="rounded-xl border border-slate-700 bg-hivemind-card p-4 shadow-panel">
-      <h2 className="mb-4 text-lg font-bold text-hivemind-text">Roadmap</h2>
+    <section className="bg-hivemind-surface px-3 py-2.5">
+      <SectionHeader label="MILESTONES" count={milestones.length} color="hivemind-green" />
 
-      <div className="space-y-4 md:hidden">
+      <div className="mt-3 space-y-2 md:hidden">
         {milestones.map((milestone, index) => {
           const style = statusStyles[milestone.status] ?? statusStyles.pending;
           const isCurrent = index === currentIndex;
+          const lineClass = milestone.status === 'completed' ? 'bg-hivemind-green/40' : 'bg-hivemind-border';
 
           return (
-            <article key={milestone.name} className="relative pl-8">
+            <article key={milestone.name} className="relative pl-5">
               {index < milestones.length - 1 ? (
-                <span className="absolute left-[11px] top-6 h-full w-px bg-slate-700" />
+                <span className={`absolute left-[3px] top-[10px] h-full w-[2px] ${lineClass}`} />
               ) : null}
-              <span
-                className={`absolute left-0 top-1 h-6 w-6 rounded-full border-2 ${style.dot} ${
-                  isCurrent ? 'ring-2 ring-hivemind-blue/50 ring-offset-2 ring-offset-hivemind-card' : ''
-                }`}
-              />
-              <p className={`text-sm font-semibold ${style.text}`}>{milestone.name}</p>
-              <p className="text-xs text-hivemind-muted">{milestone.eta}</p>
+              <span className={`absolute left-0 top-[2px] h-[8px] w-[8px] border ${style.node}`} />
+              <p className={`text-[9px] uppercase tracking-[0.08em] ${isCurrent ? 'text-hivemind-yellow' : style.text}`}>
+                {milestone.name}
+              </p>
+              <p className="text-[8px] text-hivemind-dim">ETA {milestone.eta}</p>
             </article>
           );
         })}
       </div>
 
-      <div className="hidden md:flex md:items-start md:gap-0">
+      <div className="mt-3 hidden md:flex md:items-start">
         {milestones.map((milestone, index) => {
           const style = statusStyles[milestone.status] ?? statusStyles.pending;
           const isCurrent = index === currentIndex;
+          const lineClass = milestone.status === 'completed' ? 'bg-hivemind-green/40' : 'bg-hivemind-border';
 
           return (
-            <div key={milestone.name} className="relative flex flex-1 flex-col items-center px-2">
-              <div className="mb-3 flex w-full items-center">
-                <span
-                  className={`h-5 w-5 shrink-0 rounded-full border-2 ${style.dot} ${
-                    isCurrent ? 'ring-2 ring-hivemind-blue/50 ring-offset-2 ring-offset-hivemind-card' : ''
-                  }`}
-                />
-                {index < milestones.length - 1 ? (
-                  <span className="ml-2 h-0.5 w-full bg-slate-700" />
-                ) : null}
+            <div key={milestone.name} className="flex flex-1 flex-col items-center">
+              <div className="mb-2 flex w-full items-center">
+                <span className={`h-[8px] w-[8px] shrink-0 border ${style.node}`} />
+                {index < milestones.length - 1 ? <span className={`ml-1 h-[2px] w-full ${lineClass}`} /> : null}
               </div>
-              <p className={`text-center text-sm font-semibold ${style.text}`}>{milestone.name}</p>
-              <p className="text-center text-xs text-hivemind-muted">{milestone.eta}</p>
+              <p className={`text-center text-[9px] uppercase tracking-[0.08em] ${isCurrent ? 'text-hivemind-yellow' : style.text}`}>
+                {milestone.name}
+              </p>
+              <p className="text-center text-[8px] text-hivemind-dim">ETA {milestone.eta}</p>
             </div>
           );
         })}

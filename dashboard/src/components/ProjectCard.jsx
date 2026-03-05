@@ -1,99 +1,67 @@
-import { Link } from 'react-router-dom';
-
-const statusConfig = {
-  working: {
-    label: 'Working',
-    border: 'border-l-4 border-l-hivemind-green',
-    badge: 'text-hivemind-green bg-hivemind-green/10 border-hivemind-green/30',
-    icon: '●'
-  },
-  needs_input: {
-    label: 'Needs Input',
-    border: 'border-l-4 border-l-hivemind-yellow',
-    badge: 'text-hivemind-yellow bg-hivemind-yellow/10 border-hivemind-yellow/30',
-    icon: '!'
-  },
-  pending_review: {
-    label: 'Pending Review',
-    border: 'border-l-4 border-l-hivemind-blue',
-    badge: 'text-hivemind-blue bg-hivemind-blue/10 border-hivemind-blue/30',
-    icon: '<>'
-  },
-  blocked: {
-    label: 'Blocked',
-    border: 'border-l-4 border-l-hivemind-red',
-    badge: 'text-hivemind-red bg-hivemind-red/10 border-hivemind-red/30',
-    icon: '■'
-  },
-  paused: {
-    label: 'Paused',
-    border: 'border-l-4 border-l-hivemind-gray',
-    badge: 'text-hivemind-gray bg-hivemind-gray/10 border-hivemind-gray/30',
-    icon: '∥'
-  }
-};
+import { useNavigate } from 'react-router-dom';
+import { getProjectStatus } from './statusSystem';
 
 function formatRelativeTime(dateValue) {
   if (!dateValue) {
-    return 'sin actividad';
+    return '--';
   }
 
   const date = new Date(dateValue);
   if (Number.isNaN(date.getTime())) {
-    return 'sin actividad';
+    return '--';
   }
 
   const diffMs = Date.now() - date.getTime();
   const diffMin = Math.max(0, Math.floor(diffMs / 60000));
 
   if (diffMin < 1) {
-    return 'hace menos de 1 min';
+    return '<1m';
   }
   if (diffMin < 60) {
-    return `hace ${diffMin} min`;
+    return `${diffMin}m`;
   }
 
   const diffHours = Math.floor(diffMin / 60);
   if (diffHours < 24) {
-    return `hace ${diffHours} h`;
+    return `${diffHours}h`;
   }
 
   const diffDays = Math.floor(diffHours / 24);
-  return `hace ${diffDays} d`;
+  return `${diffDays}d`;
 }
 
 export default function ProjectCard({ project }) {
-  const status = statusConfig[project.status] ?? statusConfig.paused;
+  const navigate = useNavigate();
+  const status = getProjectStatus(project.status);
+
+  const workers = Number.isFinite(project.active_workers) ? project.active_workers : 0;
+  const tasks = Number.isFinite(project.pending_tasks) ? project.pending_tasks : 0;
+
+  const onOpen = () => navigate(`/project/${project.id}`);
 
   return (
-    <Link
-      to={`/project/${project.id}`}
-      className={`block rounded-xl border border-slate-700 bg-hivemind-card p-5 shadow-panel transition hover:-translate-y-0.5 hover:border-slate-500 ${status.border}`}
+    <tr
+      className="cursor-pointer border-b border-hivemind-border/80 text-[10px] transition-colors duration-150 last:border-b-0 hover:bg-[#252525]"
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      tabIndex={0}
+      role="button"
+      aria-label={`Open project ${project.name}`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-xl font-bold text-hivemind-text">{project.name}</h3>
-        <span
-          className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-semibold ${status.badge}`}
-        >
-          <span>{status.icon}</span>
-          <span>{status.label}</span>
-        </span>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <p className="text-hivemind-muted">Workers activos</p>
-          <p className="mt-1 text-lg font-semibold">{project.active_workers}</p>
-        </div>
-        <div>
-          <p className="text-hivemind-muted">Tareas pendientes</p>
-          <p className="mt-1 text-lg font-semibold">{project.pending_tasks}</p>
-        </div>
-      </div>
-
-      <p className="mt-4 text-sm text-hivemind-muted">
-        Ultima actividad: <span className="text-hivemind-text">{formatRelativeTime(project.last_activity)}</span>
-      </p>
-    </Link>
+      <td className="px-2 py-1.5 font-semibold text-hivemind-text">{project.name}</td>
+      <td className={`px-2 py-1.5 text-[9px] font-semibold uppercase tracking-[0.1em] ${status.textClass}`}>
+        {status.label}
+      </td>
+      <td className={`px-2 py-1.5 ${workers > 0 ? 'text-hivemind-green' : 'text-hivemind-dim'}`}>
+        {workers}
+      </td>
+      <td className={`px-2 py-1.5 ${tasks > 0 ? 'text-hivemind-yellow' : 'text-hivemind-dim'}`}>{tasks}</td>
+      <td className="px-2 py-1.5 text-hivemind-dim">{formatRelativeTime(project.last_activity)}</td>
+    </tr>
   );
 }

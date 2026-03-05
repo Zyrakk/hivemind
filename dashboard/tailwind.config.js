@@ -1,23 +1,31 @@
 /** @type {import('tailwindcss').Config} */
+const monoStack = ['Martian Mono', 'JetBrains Mono', 'Fira Code', 'ui-monospace', 'monospace'];
+
 export default {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   theme: {
+    fontFamily: {
+      sans: monoStack,
+      mono: monoStack
+    },
     extend: {
       colors: {
         hivemind: {
-          bg: '#0f172a',
-          card: '#1e293b',
-          text: '#e2e8f0',
-          muted: '#94a3b8',
-          green: '#22c55e',
-          yellow: '#eab308',
-          blue: '#3b82f6',
-          red: '#ef4444',
-          gray: '#6b7280'
+          bg: '#1a1a1a',
+          surface: '#1f1f1f',
+          border: '#2a2a2a',
+          text: '#c8c8c8',
+          muted: '#777777',
+          dim: '#444444',
+          green: '#5fba7d',
+          yellow: '#d4a843',
+          blue: '#6b8fc7',
+          red: '#c75a5a',
+          gray: '#4a4a4a'
         }
       },
-      boxShadow: {
-        panel: '0 10px 30px rgba(2, 6, 23, 0.35)'
+      borderRadius: {
+        none: '0'
       }
     }
   },

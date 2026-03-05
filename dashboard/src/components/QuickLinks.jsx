@@ -1,8 +1,8 @@
 const linkConfig = [
-  { key: 'repository', label: 'Repositorio', icon: 'GH' },
-  { key: 'open_prs', label: 'PRs abiertos', icon: 'PR' },
-  { key: 'agents_md', label: 'AGENTS.md', icon: 'MD' },
-  { key: 'active_branch', label: 'Rama activa', icon: 'BR' }
+  { key: 'repository', label: 'Repository', icon: 'GH' },
+  { key: 'open_prs', label: 'Open PRs', icon: 'PR' },
+  { key: 'agents_md', label: 'Agents', icon: 'MD' },
+  { key: 'active_branch', label: 'Active branch', icon: 'BR' }
 ];
 
 function resolveLink(quickLinks, key) {
@@ -11,9 +11,10 @@ function resolveLink(quickLinks, key) {
     if (!branch || !branch.url) {
       return null;
     }
+
     return {
       href: branch.url,
-      label: `${linkConfig.find((item) => item.key === key)?.label ?? 'Rama'}: ${branch.name ?? 'active'}`
+      label: branch.name ? branch.name : 'active'
     };
   }
 
@@ -34,23 +35,22 @@ export default function QuickLinks({ quickLinks }) {
     .filter((item) => item.resolved);
 
   if (entries.length === 0) {
-    return <p className="text-sm text-hivemind-muted">No hay links disponibles</p>;
+    return <p className="border border-dashed border-hivemind-border px-3 py-3 text-[9px] text-hivemind-dim">No links available</p>;
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="grid grid-cols-2 gap-px">
       {entries.map((item) => (
         <a
           key={item.key}
           href={item.resolved.href}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-3 rounded-lg border border-slate-600 bg-slate-800/50 px-3 py-2 text-sm text-hivemind-muted transition hover:border-slate-500 hover:text-hivemind-text"
+          className="inline-flex min-w-0 items-center gap-1 border border-hivemind-border bg-[#141414] px-2 py-1.5 text-[9px] text-hivemind-muted transition-colors duration-150 hover:border-hivemind-muted hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
         >
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-500 text-xs font-bold text-hivemind-blue">
-            {item.icon}
-          </span>
+          <span className="shrink-0 text-[8px] font-bold text-hivemind-blue">{item.icon}</span>
           <span className="truncate">{item.resolved.label}</span>
+          <span className="shrink-0 text-[8px] text-hivemind-dim">↗</span>
         </a>
       ))}
     </div>

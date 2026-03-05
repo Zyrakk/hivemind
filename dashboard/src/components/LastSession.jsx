@@ -1,7 +1,16 @@
 const resultStyles = {
-  success: 'bg-hivemind-green/15 text-hivemind-green border-hivemind-green/30',
-  partial: 'bg-hivemind-yellow/15 text-hivemind-yellow border-hivemind-yellow/30',
-  failed: 'bg-hivemind-red/15 text-hivemind-red border-hivemind-red/30'
+  success: {
+    label: 'OK',
+    badge: 'bg-hivemind-green/[0.08] text-hivemind-green'
+  },
+  partial: {
+    label: 'PARTIAL',
+    badge: 'bg-hivemind-yellow/[0.08] text-hivemind-yellow'
+  },
+  failed: {
+    label: 'FAIL',
+    badge: 'bg-hivemind-red/[0.08] text-hivemind-red'
+  }
 };
 
 function formatDate(value) {
@@ -14,10 +23,9 @@ function formatDate(value) {
     return value;
   }
 
-  return new Intl.DateTimeFormat('es-ES', {
+  return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
+    month: 'short',
     hour: '2-digit',
     minute: '2-digit'
   }).format(date);
@@ -25,7 +33,7 @@ function formatDate(value) {
 
 export default function LastSession({ lastSession }) {
   if (!lastSession) {
-    return <p className="text-sm text-hivemind-muted">No hay sesiones registradas</p>;
+    return <p className="border border-dashed border-hivemind-border px-3 py-3 text-[9px] text-hivemind-dim">No sessions recorded</p>;
   }
 
   const style = resultStyles[lastSession.result] ?? resultStyles.partial;
@@ -33,43 +41,37 @@ export default function LastSession({ lastSession }) {
   const pending = Array.isArray(lastSession.pending) ? lastSession.pending : [];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs text-hivemind-muted">{formatDate(lastSession.date)}</p>
-          <p className="text-sm font-semibold text-hivemind-text">{lastSession.task}</p>
-        </div>
-        <span className={`rounded-full border px-2 py-1 text-xs font-semibold ${style}`}>
-          {lastSession.result}
+    <div>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[9px] text-hivemind-dim">{formatDate(lastSession.date)}</p>
+        <span className={`px-1.5 py-[1px] text-[8px] font-semibold uppercase tracking-[0.08em] ${style.badge}`}>
+          {style.label}
         </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div>
-          <p className="mb-2 text-sm font-semibold text-hivemind-text">Que se hizo</p>
-          {did.length === 0 ? (
-            <p className="text-sm text-hivemind-muted">Sin registros</p>
-          ) : (
-            <ul className="list-disc space-y-1 pl-5 text-sm text-hivemind-muted">
-              {did.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div>
-          <p className="mb-2 text-sm font-semibold text-hivemind-text">Pendiente</p>
-          {pending.length === 0 ? (
-            <p className="text-sm text-hivemind-muted">Nada pendiente</p>
-          ) : (
-            <ul className="list-disc space-y-1 pl-5 text-sm text-hivemind-muted">
-              {pending.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+      <p className="mt-1 text-[10px] font-medium text-hivemind-text">{lastSession.task}</p>
+
+      {did.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-[9px] text-hivemind-muted">
+          {did.map((item) => (
+            <li key={item} className="flex items-start gap-1.5">
+              <span className="text-hivemind-green">▸</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {pending.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-[9px] text-hivemind-muted">
+          {pending.map((item) => (
+            <li key={item} className="flex items-start gap-1.5">
+              <span className="text-hivemind-yellow">▲</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

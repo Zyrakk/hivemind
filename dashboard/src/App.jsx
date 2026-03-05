@@ -1,35 +1,33 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  BrowserRouter,
-  Navigate,
-  NavLink,
-  Route,
-  Routes,
-  useNavigate
-} from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import AlertBanner from './components/AlertBanner';
+import FlashTicker from './components/FlashTicker';
 import GlobalCounters from './components/GlobalCounters';
 import ProjectCard from './components/ProjectCard';
+import StatusBar from './components/StatusBar';
+import SystemFooter from './components/SystemFooter';
 import WorkerList from './components/WorkerList';
 import { mockState } from './mockData';
-import ProjectDetail from './views/ProjectDetail';
 import ProjectContext from './views/ProjectContext';
+import ProjectDetail from './views/ProjectDetail';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 const POLL_INTERVAL_MS = 15000;
 
 function normalizeState(payload) {
   if (!payload || typeof payload !== 'object') {
-    return mockState;
+    return normalizeState(mockState);
   }
 
   const projects = Array.isArray(payload.projects) ? payload.projects : [];
   const workers = Array.isArray(payload.active_workers) ? payload.active_workers : [];
   const counters = payload.counters ?? {};
+  const recentEvents = Array.isArray(payload.recent_events) ? payload.recent_events : [];
 
   return {
     projects,
     active_workers: workers,
+    recent_events: recentEvents,
     counters: {
       active_workers:
         typeof counters.active_workers === 'number'
@@ -52,11 +50,82 @@ function formatLastUpdated(dateValue) {
     return '--:--:--';
   }
 
-  return new Intl.DateTimeFormat('es-ES', {
+  return new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit'
   }).format(dateValue);
+}
+
+function newestEvent(events) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return null;
+  }
+
+  return [...events].sort(
+    (a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime()
+  )[0];
+}
+
+function statusLabel(status) {
+  const map = {
+    working: 'ACT',
+    needs_input: 'HLD',
+    pending_review: 'REV',
+    blocked: 'BLK',
+    paused: 'OFF'
+  };
+
+  return map[status] ?? 'OFF';
+}
+
+function buildSyntheticEvent(previousState, currentState) {
+  if (!previousState) {
+    return null;
+  }
+
+  const previousWorkers = Array.isArray(previousState.active_workers) ? previousState.active_workers : [];
+  const currentWorkers = Array.isArray(currentState.active_workers) ? currentState.active_workers : [];
+
+  const previousWorkerIDs = new Set(previousWorkers.map((worker) => String(worker.id)));
+  const currentWorkerIDs = new Set(currentWorkers.map((worker) => String(worker.id)));
+
+  const newWorkers = currentWorkers.filter((worker) => !previousWorkerIDs.has(String(worker.id)));
+  if (newWorkers.length > 0) {
+    const worker = newWorkers[0];
+    return {
+      timestamp: new Date().toISOString(),
+      description: `worker ${worker.session_id ?? worker.id} started`,
+      event_type: 'worker_started'
+    };
+  }
+
+  const previousProjects = Array.isArray(previousState.projects) ? previousState.projects : [];
+  const currentProjects = Array.isArray(currentState.projects) ? currentState.projects : [];
+  const previousByID = new Map(previousProjects.map((project) => [project.id, project]));
+
+  for (const project of currentProjects) {
+    const previous = previousByID.get(project.id);
+    if (previous && previous.status !== project.status) {
+      return {
+        timestamp: new Date().toISOString(),
+        description: `${project.name ?? project.id} status changed to ${statusLabel(project.status)}`,
+        event_type: project.status === 'needs_input' ? 'input_needed' : 'task_completed'
+      };
+    }
+  }
+
+  if (currentWorkers.length < previousWorkers.length) {
+    const endedWorkers = previousWorkers.filter((worker) => !currentWorkerIDs.has(String(worker.id)));
+    const worker = endedWorkers[0];
+    return {
+      timestamp: new Date().toISOString(),
+      description: `worker ${worker?.session_id ?? worker?.id ?? 'session'} completed`,
+      event_type: 'task_completed'
+    };
+  }
+
+  return null;
 }
 
 async function fetchState(signal) {
@@ -79,6 +148,13 @@ function DashboardOverview() {
   const [dashboardState, setDashboardState] = useState(() => normalizeState(mockState));
   const [lastUpdated, setLastUpdated] = useState(() => new Date());
   const [connectionError, setConnectionError] = useState(false);
+  const [latestEvent, setLatestEvent] = useState(() => newestEvent(mockState.recent_events ?? []) ?? null);
+  const [eventCount, setEventCount] = useState(() =>
+    Array.isArray(mockState.recent_events) ? mockState.recent_events.length : 0
+  );
+
+  const previousStateRef = useRef(normalizeState(mockState));
+  const eventCountRef = useRef(Array.isArray(mockState.recent_events) ? mockState.recent_events.length : 0);
 
   useEffect(() => {
     let isMounted = true;
@@ -94,9 +170,26 @@ function DashboardOverview() {
           return;
         }
 
-        setDashboardState(normalizeState(payload));
+        const nextState = normalizeState(payload);
+        setDashboardState(nextState);
         setLastUpdated(new Date());
         setConnectionError(false);
+
+        if (nextState.recent_events.length > 0) {
+          const latest = newestEvent(nextState.recent_events);
+          setLatestEvent(latest);
+          setEventCount(nextState.recent_events.length);
+          eventCountRef.current = nextState.recent_events.length;
+        } else {
+          const syntheticEvent = buildSyntheticEvent(previousStateRef.current, nextState);
+          if (syntheticEvent) {
+            setLatestEvent(syntheticEvent);
+            eventCountRef.current += 1;
+            setEventCount(eventCountRef.current);
+          }
+        }
+
+        previousStateRef.current = nextState;
       } catch (_error) {
         if (!isMounted) {
           return;
@@ -130,59 +223,108 @@ function DashboardOverview() {
   };
 
   return (
-    <div className="min-h-screen bg-hivemind-bg text-hivemind-text">
-      <header className="sticky top-0 z-20 border-b border-slate-700 bg-hivemind-bg/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <h1 className="text-2xl font-black tracking-tight">Hivemind Dashboard</h1>
-            <p className="text-sm text-hivemind-muted">
-              Ultima actualizacion: <span className="text-hivemind-text">{formatLastUpdated(lastUpdated)}</span>
-            </p>
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+      <header className="sticky top-0 z-30 border-b border-hivemind-border bg-[#141414]">
+        <div className="mx-auto flex h-[26px] w-full max-w-[1200px] items-center justify-between px-4 text-[9px] sm:px-5">
+          <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
+            <span className="truncate font-bold text-hivemind-text">HIVEMIND</span>
+            <span className="text-hivemind-dim">|</span>
+            <span className="text-hivemind-dim">k3s</span>
+            <span className="text-hivemind-dim">|</span>
+            <span className={connectionError ? 'text-hivemind-yellow' : 'text-hivemind-green'}>
+              {connectionError ? 'WARN' : 'CONN'}
+            </span>
           </div>
 
-          <nav className="flex flex-wrap items-center gap-2 text-sm">
-            <NavLink
-              className="rounded-md bg-hivemind-blue/20 px-3 py-1.5 font-semibold text-hivemind-blue"
-              to="/"
-            >
-              Vista 1: Estado General
-            </NavLink>
-            <span className="rounded-md border border-slate-600 px-3 py-1.5 text-hivemind-muted">
-              Vista 2: Progreso (por proyecto)
-            </span>
-            <span className="rounded-md border border-slate-600 px-3 py-1.5 text-hivemind-muted">
-              Vista 3: Contexto (por proyecto)
-            </span>
-          </nav>
+          <div className="flex items-center gap-3 uppercase tracking-[0.1em]">
+            <span className="text-hivemind-dim">{eventCount} events</span>
+            <span className="text-hivemind-muted">{formatLastUpdated(lastUpdated)}</span>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
+      <FlashTicker event={latestEvent} eventCount={eventCount} />
+
+      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
         {connectionError ? (
-          <AlertBanner
-            variant="error"
-            message="Sin conexion con el orquestador"
-          />
+          <AlertBanner variant="error" message="No connection to the orchestrator" />
         ) : null}
 
         {needsInputProjects.length > 0 ? (
           <AlertBanner
-            message={`${needsInputProjects.length} proyectos necesitan tu atencion`}
-            actionLabel="Ir al primero"
+            message={`${needsInputProjects.length} unit${needsInputProjects.length > 1 ? 's' : ''} require operator input`}
+            actionLabel="OPEN FIRST"
             onAction={handleNeedsInputClick}
           />
         ) : null}
 
         <GlobalCounters counters={dashboardState.counters} />
 
-        <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {dashboardState.projects.map((project) => (
-            <ProjectCard key={project.id} project={project} />
-          ))}
-        </section>
+        <section className="grid gap-px bg-hivemind-border md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px]">
+          <section className="bg-hivemind-surface px-3 py-2">
+            <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">PROJECTS</p>
+            <StatusBar projects={dashboardState.projects} />
 
-        <WorkerList workers={dashboardState.active_workers} />
+            <div className="mt-1 overflow-x-auto">
+              <table className="min-w-full text-left">
+                <thead>
+                  <tr className="border-b border-hivemind-border text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">
+                    <th className="px-2 py-1">NAME</th>
+                    <th className="px-2 py-1">ST</th>
+                    <th className="px-2 py-1">W</th>
+                    <th className="px-2 py-1">T</th>
+                    <th className="px-2 py-1">AGE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboardState.projects.map((project) => (
+                    <ProjectCard key={project.id} project={project} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <WorkerList workers={dashboardState.active_workers} />
+
+          <aside className="flex flex-col gap-px bg-hivemind-border">
+            <section className="bg-hivemind-surface px-3 py-2">
+              <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">SYSTEM</p>
+
+              <div className="mt-1 hidden grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[9px] md:grid">
+                <span className="text-hivemind-dim">cluster</span>
+                <span className="text-hivemind-muted">k3s</span>
+                <span className="text-hivemind-dim">store</span>
+                <span className="text-hivemind-muted">sqlite</span>
+                <span className="text-hivemind-dim">tunnel</span>
+                <span className="text-hivemind-muted">cloudflare</span>
+                <span className="text-hivemind-dim">poll</span>
+                <span className="text-hivemind-muted">15s</span>
+                <span className="text-hivemind-dim">ver</span>
+                <span className="text-hivemind-muted">0.3.0</span>
+              </div>
+
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] md:hidden">
+                <span className="text-hivemind-dim">cluster:k3s</span>
+                <span className="text-hivemind-dim">store:sqlite</span>
+                <span className="text-hivemind-dim">tunnel:cloudflare</span>
+                <span className="text-hivemind-dim">poll:15s</span>
+                <span className="text-hivemind-dim">ver:0.3.0</span>
+              </div>
+            </section>
+
+            <section className="bg-hivemind-surface px-3 py-2">
+              <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">ENDPOINT</p>
+              <p className="mt-1 break-words text-[9px] text-hivemind-muted">hivemind.zyrak.cloud</p>
+            </section>
+          </aside>
+        </section>
       </main>
+
+      <SystemFooter
+        units={dashboardState.projects.length}
+        workers={dashboardState.active_workers.length}
+      />
     </div>
   );
 }

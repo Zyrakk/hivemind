@@ -1,11 +1,11 @@
 const variantStyles = {
   warning: {
-    container: 'border-hivemind-yellow/50 bg-hivemind-yellow/10 text-hivemind-yellow',
-    dot: 'bg-hivemind-yellow'
+    container: 'border-hivemind-yellow/40 bg-hivemind-yellow/[0.08] text-hivemind-yellow',
+    marker: '▲ ALERT'
   },
   error: {
-    container: 'border-hivemind-red/50 bg-hivemind-red/10 text-hivemind-red',
-    dot: 'bg-hivemind-red'
+    container: 'border-hivemind-red/40 bg-hivemind-red/[0.08] text-hivemind-red',
+    marker: '■ ALERT'
   }
 };
 
@@ -22,17 +22,17 @@ export default function AlertBanner({
   const style = variantStyles[variant] ?? variantStyles.warning;
 
   return (
-    <div className={`rounded-xl border px-4 py-3 shadow-panel ${style.container}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className={`h-2.5 w-2.5 animate-pulse rounded-full ${style.dot}`} />
-          <p className="text-sm font-semibold md:text-base">{message}</p>
+    <div className={`border px-3 py-2 ${style.container}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.15em]">{style.marker}</span>
+          <p className="truncate text-[10px] leading-tight text-hivemind-muted">{message}</p>
         </div>
         {actionLabel && onAction ? (
           <button
             type="button"
             onClick={onAction}
-            className="rounded-md border border-current px-3 py-1 text-xs font-medium transition hover:bg-black/20 md:text-sm"
+            className="border border-current px-2 py-1 text-[9px] uppercase tracking-[0.1em] transition-colors duration-150 hover:bg-hivemind-bg/40"
           >
             {actionLabel}
           </button>

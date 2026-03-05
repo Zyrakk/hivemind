@@ -1,3 +1,5 @@
+import SectionHeader from './SectionHeader';
+
 function normalizeItems(content) {
   if (Array.isArray(content)) {
     return content;
@@ -16,23 +18,24 @@ function normalizeItems(content) {
 export default function ContributeNow({ content }) {
   const items = normalizeItems(content);
 
-  if (items.length === 0) {
-    return (
-      <section className="rounded-xl border border-hivemind-blue/40 bg-hivemind-blue/10 p-4 shadow-panel">
-        <h2 className="text-lg font-bold text-hivemind-blue">Para contribuir ahora necesitas saber:</h2>
-        <p className="mt-3 text-sm text-hivemind-muted">No hay guidance disponible</p>
-      </section>
-    );
-  }
-
   return (
-    <section className="rounded-xl border border-hivemind-blue/40 bg-hivemind-blue/10 p-4 shadow-panel">
-      <h2 className="text-lg font-bold text-hivemind-blue">Para contribuir ahora necesitas saber:</h2>
-      <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-hivemind-text">
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
+    <section className="border-l-2 border-l-hivemind-blue bg-hivemind-surface px-3 py-2.5">
+      <SectionHeader label="CONTRIBUTE NOW" color="hivemind-blue" />
+
+      {items.length === 0 ? (
+        <p className="mt-2 border border-dashed border-hivemind-border px-3 py-3 text-[9px] text-hivemind-dim">
+          No contribution notes available
+        </p>
+      ) : (
+        <ul className="mt-2 space-y-1 text-[10px] text-hivemind-muted">
+          {items.map((item) => (
+            <li key={item} className="flex items-start gap-1.5">
+              <span className="text-hivemind-blue">▸</span>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
