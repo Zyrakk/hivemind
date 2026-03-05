@@ -162,7 +162,7 @@ export function ProjectCarbonHeader({
 }) {
   return (
     <header className="sticky top-0 z-30">
-      <div className="border-b border-hivemind-border bg-[#141414]">
+      <div className="border-b border-hivemind-border bg-[#0d0d0d]">
         <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between px-4 py-1.5 text-[9px] sm:px-5">
           <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
             <button

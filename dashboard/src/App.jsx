@@ -224,7 +224,7 @@ function DashboardOverview() {
 
   return (
     <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
-      <header className="sticky top-0 z-30 border-b border-hivemind-border bg-[#141414]">
+      <header className="sticky top-0 z-30 border-b border-hivemind-border bg-[#0d0d0d]">
         <div className="mx-auto flex h-[26px] w-full max-w-[1200px] items-center justify-between px-4 text-[9px] sm:px-5">
           <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
             <span className="truncate font-bold text-hivemind-text">HIVEMIND</span>

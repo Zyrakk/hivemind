@@ -11,12 +11,12 @@ export default {
     extend: {
       colors: {
         hivemind: {
-          bg: '#1a1a1a',
-          surface: '#1f1f1f',
-          border: '#2a2a2a',
-          text: '#c8c8c8',
-          muted: '#777777',
-          dim: '#444444',
+          bg: '#111111',
+          surface: '#1c1c1c',
+          border: '#2e2e2e',
+          text: '#d9d9d9',
+          muted: '#8c8c8c',
+          dim: '#5c5c5c',
           green: '#5fba7d',
           yellow: '#d4a843',
           blue: '#6b8fc7',
