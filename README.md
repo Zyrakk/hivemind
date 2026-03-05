@@ -3,6 +3,28 @@ Semi-autonomous Go orchestrator that turns directives into reviewed code changes
 
 ---
 
+## Current status (as of 2026-03-05)
+### Working now
+- End-to-end orchestration loop is implemented: directive -> plan -> approval -> Codex worker execution -> evaluation -> state/events update.
+- Planner, launcher, evaluator, state store, dashboard API, and Telegram notifier are all wired in `cmd/orchestrator/main.go`.
+- Dashboard frontend is built and embedded into the Go binary (`dashboard/dist` + `dashboard_embed.go`), with 3 operator views:
+  - global state
+  - project progress/detail
+  - project context
+- SQLite persistence and migrations are operational (`projects`, `tasks`, `workers`, `events`) with status constraints.
+- Telegram bot supports bidirectional workflows (`/run`, `/status`, `/project`, `/approve`, `/reject`, `/pause`, `/resume`, `/consult`, `/pending`, `/help`).
+- Docker image publish to GHCR runs automatically on pushes to `main` (`.github/workflows/docker-publish.yml`).
+
+### Partially implemented
+- Consultant integration (Claude/Gemini) is available and budget-aware, but only used when enabled and configured with API keys.
+- Evaluator retry/escalation loop is implemented, but there is no separate dedicated QA worker role yet.
+- Deployment is production-usable on k3s, but operational hardening (auth, RBAC, multi-replica strategy, stronger observability) is still pending.
+
+### Known gaps
+- `config.yaml.example` still uses `codex.workers_dir`; runtime currently reads `codex.repos_dir` from `cmd/orchestrator/main.go`.
+- Worker execution mode is local process/tmux-based; a native k3s Job-based worker launcher is not implemented yet.
+- Dashboard API currently has no authentication layer; protect network access at ingress/tunnel level.
+
 ## What it does
 Hivemind receives a high-level directive and turns it into an executable plan. The planner uses GLM to break work into tasks, the launcher starts Codex workers on isolated Git branches, and the evaluator reviews each worker result before deciding next actions. State is persisted in SQLite so progress, events, and worker lifecycle survive restarts. Operators interact through the dashboard and Telegram, where the system sends completion, failure, review, and input-required notifications.
 
@@ -33,8 +55,8 @@ Hivemind receives a high-level directive and turns it into an executable plan. T
 |                     CODEX WORKERS                         |
 |                                                           |
 |  +---------+  +---------+  +---------+  +---------+      |
-|  |Worker 1 |  |Worker 2 |  |Worker 3 |  |QA Worker|      |
-|  |feature/ |  |feature/ |  |feature/ |  |testing  |      |
+|  |Worker 1 |  |Worker 2 |  |Worker 3 |  |Worker N |      |
+|  |feature/ |  |feature/ |  |feature/ |  |feature/ |      |
 |  +---------+  +---------+  +---------+  +---------+      |
 |                                                           |
 |  Each worker: isolated branch + AGENTS context + cache    |
@@ -122,7 +144,16 @@ make build
 cp config.yaml.example config.yaml
 ```
 
-`config.yaml.example` is the baseline reference. Start with `glm`, `consultants`, `telegram`, `dashboard`, `database`, `git`, and `codex` sections. Set your API key environment variable names and verify the branch and repo path settings before launching workers. Current runtime code reads `codex.repos_dir` in `cmd/orchestrator/main.go`, while the example file still shows `codex.workers_dir`.
+`config.yaml.example` is the baseline reference for most sections (`glm`, `consultants`, `telegram`, `dashboard`, `database`, `git`). For Codex worker repos, use `codex.repos_dir` because runtime currently reads that key in `cmd/orchestrator/main.go`.
+
+Recommended runtime snippet:
+
+```yaml
+codex:
+  approval_mode: full-auto
+  timeout_minutes: 30
+  repos_dir: /absolute/path/to/local/git/repos
+```
 
 ### Run locally
 ```bash
@@ -156,7 +187,7 @@ go vet ./...
 | `telegram` | Bot authentication and command access scope | `bot_token_env`, `allowed_chat_id` |
 | `git` | Worker branch naming and remote push target | `default_remote`, `branch_prefix` |
 | `dashboard` | HTTP server bind address for API and UI | `host`, `port` |
-| `codex` (workers) | Worker execution mode and time limits | `approval_mode`, `timeout_minutes`, `workers_dir` / `repos_dir` |
+| `codex` (workers) | Worker execution mode and time limits | `approval_mode`, `timeout_minutes`, `repos_dir` (legacy example still shows `workers_dir`) |
 
 ## Deployment
 Hivemind is designed for k3s deployment with manifests in `deploy/`. The default architecture runs orchestrator, dashboard API/UI, and Telegram bot in the same pod (`hivemind-orchestrator`). `deploy/orchestrator.yaml` defines namespace, PVC, deployment, and service; `deploy/cloudflare-tunnel.yaml` exposes the dashboard through Cloudflare Tunnel. Keep secrets out of Git by copying `deploy/secrets.yaml.example` to `deploy/secrets.yaml` locally.
@@ -167,6 +198,13 @@ kubectl apply -f deploy/secrets.yaml
 kubectl apply -f deploy/orchestrator.yaml
 # Optional dedicated tunnel deployment:
 # kubectl apply -f deploy/cloudflare-tunnel.yaml
+```
+
+If your image tag is `latest` with `imagePullPolicy: Always`, trigger rollout after a new image is published:
+
+```bash
+kubectl --kubeconfig /path/to/kubeconfig rollout restart deployment/hivemind-orchestrator -n hivemind
+kubectl --kubeconfig /path/to/kubeconfig rollout status deployment/hivemind-orchestrator -n hivemind
 ```
 
 ## Telegram bot
@@ -229,10 +267,10 @@ If stdin is not a TTY, interactive prompts are disabled and only the HTTP server
 | Phase | Status |
 |---|---|
 | Phase 0 - foundations | done |
-| Phase 1 - dashboard web v1 | in progress |
-| Phase 2 - GLM orchestrator v1 | in progress |
-| Phase 3 - notifications and communication | in progress |
-| Phase 4 - automated testing and self-correction | planned |
+| Phase 1 - dashboard web v1 | done (iterating UX/content quality) |
+| Phase 2 - GLM orchestrator v1 | in progress (core flow implemented) |
+| Phase 3 - notifications and communication | in progress (bidirectional bot implemented) |
+| Phase 4 - automated testing and self-correction | in progress (retry/escalation implemented, QA-worker role pending) |
 | Phase 5 - self-improvement and metrics | planned |
 
 See `docs/roadmap.md` for full phase details.
