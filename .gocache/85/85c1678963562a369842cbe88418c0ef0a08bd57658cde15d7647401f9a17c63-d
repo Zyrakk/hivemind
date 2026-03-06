@@ -1,6 +1,0 @@
-=== RUN   TestMigrationsExist
---- PASS: TestMigrationsExist (0.00s)
-=== RUN   TestStoreCRUD
---- PASS: TestStoreCRUD (0.00s)
-PASS
-ok  	github.com/zyrakk/hivemind/internal/state	0.015s

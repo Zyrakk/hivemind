@@ -1,5 +1,0 @@
-./handlers.go
-./server.go
-./static.go
-./dashboard_test.go
-./handlers_test.go
