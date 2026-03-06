@@ -14,36 +14,42 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 WORKDIR /src
+RUN apk add --no-cache gcc musl-dev
+
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 COPY --from=dashboard-builder /src/dashboard/dist ./dashboard/dist
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/orchestrator ./cmd/orchestrator
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/orchestrator ./cmd/orchestrator
 
-FROM debian:bookworm-slim
+FROM node:22-alpine
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+ENV HOME=/home/hivemind
+
+RUN apk add --no-cache \
+        bash \
         ca-certificates \
-        curl \
         git \
-        nodejs \
-        npm \
+        sqlite-libs \
         tmux \
-    && npm install -g @openai/codex \
-    && npm cache clean --force \
-    && rm -rf /var/lib/apt/lists/* /root/.npm \
-    && mkdir -p /root/.codex
+        tree \
+    && npm install -g @anthropic-ai/claude-code @openai/codex \
+    && addgroup -g 10001 -S hivemind \
+    && adduser -D -u 10001 -G hivemind -h /home/hivemind hivemind \
+    && mkdir -p /app/repos /data/sessions/cache /home/hivemind/.claude /home/hivemind/.codex \
+    && chown -R hivemind:hivemind /app /data /home/hivemind
 
-WORKDIR /app
+WORKDIR /data
 
-COPY --from=builder /out/orchestrator /app/orchestrator
-COPY prompts /app/prompts
-COPY agents /app/agents
-COPY templates /app/templates
-RUN mkdir -p /app/sessions/cache
+COPY --from=builder /out/orchestrator /usr/local/bin/orchestrator
+COPY --chown=hivemind:hivemind AGENTS.md /data/AGENTS.md
+COPY --chown=hivemind:hivemind prompts /data/prompts
+COPY --chown=hivemind:hivemind agents /data/agents
+COPY --chown=hivemind:hivemind templates /data/templates
+
+USER hivemind
 
 EXPOSE 8080
-ENTRYPOINT ["/app/orchestrator"]
+ENTRYPOINT ["/usr/local/bin/orchestrator"]

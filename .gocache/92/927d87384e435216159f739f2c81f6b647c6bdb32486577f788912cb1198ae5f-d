@@ -1,0 +1,158 @@
+=== RUN   TestBuildThinkPromptFirstTurn
+=== PAUSE TestBuildThinkPromptFirstTurn
+=== RUN   TestBuildThinkPromptContinuation
+=== PAUSE TestBuildThinkPromptContinuation
+=== RUN   TestBuildProposePrompt
+=== PAUSE TestBuildProposePrompt
+=== RUN   TestBuildRebuildPrompt
+=== PAUSE TestBuildRebuildPrompt
+=== RUN   TestBuildEvalPrompt
+=== PAUSE TestBuildEvalPrompt
+=== RUN   TestParseThinkResult
+=== PAUSE TestParseThinkResult
+=== RUN   TestParsePlanResult
+=== PAUSE TestParsePlanResult
+=== RUN   TestParseEvalResult
+=== PAUSE TestParseEvalResult
+=== RUN   TestParseDoubleEncodedJSON
+=== PAUSE TestParseDoubleEncodedJSON
+=== RUN   TestValidateThinkResultBadType
+=== PAUSE TestValidateThinkResultBadType
+=== RUN   TestValidateInfoRequestDangerousCommand
+=== PAUSE TestValidateInfoRequestDangerousCommand
+=== RUN   TestBuildInvokeArgs
+=== PAUSE TestBuildInvokeArgs
+=== RUN   TestAvailableBinaryNotFound
+=== PAUSE TestAvailableBinaryNotFound
+=== RUN   TestThinkAlwaysReturnsReady
+=== PAUSE TestThinkAlwaysReturnsReady
+=== RUN   TestProposeConversion
+=== PAUSE TestProposeConversion
+=== RUN   TestProposeIncludesReconData
+=== PAUSE TestProposeIncludesReconData
+=== RUN   TestRebuildAppendsFeedback
+=== PAUSE TestRebuildAppendsFeedback
+=== RUN   TestEvaluateConversion
+=== PAUSE TestEvaluateConversion
+=== RUN   TestEvaluateIncludesBuildTestVet
+=== PAUSE TestEvaluateIncludesBuildTestVet
+=== RUN   TestAvailableNilClient
+=== PAUSE TestAvailableNilClient
+=== RUN   TestAvailableWithClient
+=== PAUSE TestAvailableWithClient
+=== RUN   TestPrimarySucceeds
+=== PAUSE TestPrimarySucceeds
+=== RUN   TestPrimaryFailsFallbackSucceeds
+=== PAUSE TestPrimaryFailsFallbackSucceeds
+=== RUN   TestPrimaryUnavailableFallbackSucceeds
+=== PAUSE TestPrimaryUnavailableFallbackSucceeds
+=== RUN   TestBothFail
+=== PAUSE TestBothFail
+=== RUN   TestNoFallback
+=== PAUSE TestNoFallback
+=== RUN   TestSwitchCallbackReceivesReason
+=== PAUSE TestSwitchCallbackReceivesReason
+=== RUN   TestActiveEngine
+=== PAUSE TestActiveEngine
+=== CONT  TestBuildThinkPromptFirstTurn
+--- PASS: TestBuildThinkPromptFirstTurn (0.00s)
+=== CONT  TestActiveEngine
+=== RUN   TestActiveEngine/primary_available
+=== PAUSE TestActiveEngine/primary_available
+=== RUN   TestActiveEngine/primary_unavailable_fallback_available
+=== PAUSE TestActiveEngine/primary_unavailable_fallback_available
+=== RUN   TestActiveEngine/both_unavailable
+=== PAUSE TestActiveEngine/both_unavailable
+=== CONT  TestProposeConversion
+--- PASS: TestProposeConversion (0.00s)
+=== CONT  TestBuildRebuildPrompt
+=== CONT  TestActiveEngine/primary_available
+=== CONT  TestThinkAlwaysReturnsReady
+--- PASS: TestThinkAlwaysReturnsReady (0.00s)
+=== CONT  TestBuildThinkPromptContinuation
+--- PASS: TestBuildThinkPromptContinuation (0.00s)
+=== CONT  TestActiveEngine/both_unavailable
+=== CONT  TestActiveEngine/primary_unavailable_fallback_available
+=== CONT  TestBuildProposePrompt
+=== CONT  TestAvailableWithClient
+=== CONT  TestAvailableNilClient
+=== CONT  TestBothFail
+--- PASS: TestActiveEngine (0.00s)
+    --- PASS: TestActiveEngine/primary_available (0.00s)
+    --- PASS: TestActiveEngine/both_unavailable (0.00s)
+    --- PASS: TestActiveEngine/primary_unavailable_fallback_available (0.00s)
+--- PASS: TestBuildRebuildPrompt (0.00s)
+--- PASS: TestAvailableWithClient (0.00s)
+--- PASS: TestAvailableNilClient (0.00s)
+=== CONT  TestSwitchCallbackReceivesReason
+--- PASS: TestBuildProposePrompt (0.00s)
+=== CONT  TestValidateInfoRequestDangerousCommand
+--- PASS: TestBothFail (0.00s)
+=== CONT  TestNoFallback
+--- PASS: TestNoFallback (0.00s)
+--- PASS: TestValidateInfoRequestDangerousCommand (0.00s)
+=== CONT  TestEvaluateConversion
+=== CONT  TestProposeIncludesReconData
+=== CONT  TestPrimaryFailsFallbackSucceeds
+=== CONT  TestPrimaryUnavailableFallbackSucceeds
+=== CONT  TestRebuildAppendsFeedback
+=== CONT  TestPrimarySucceeds
+--- PASS: TestSwitchCallbackReceivesReason (0.00s)
+--- PASS: TestEvaluateConversion (0.00s)
+--- PASS: TestProposeIncludesReconData (0.00s)
+--- PASS: TestPrimaryFailsFallbackSucceeds (0.00s)
+--- PASS: TestPrimaryUnavailableFallbackSucceeds (0.00s)
+--- PASS: TestRebuildAppendsFeedback (0.00s)
+--- PASS: TestPrimarySucceeds (0.00s)
+=== CONT  TestParseDoubleEncodedJSON
+=== CONT  TestParseEvalResult
+--- PASS: TestParseDoubleEncodedJSON (0.00s)
+=== RUN   TestParseEvalResult/pass
+=== CONT  TestParsePlanResult
+=== PAUSE TestParseEvalResult/pass
+=== RUN   TestParseEvalResult/retry
+=== PAUSE TestParseEvalResult/retry
+=== RUN   TestParseEvalResult/escalate
+=== PAUSE TestParseEvalResult/escalate
+=== CONT  TestParseEvalResult/pass
+--- PASS: TestParsePlanResult (0.00s)
+=== CONT  TestParseEvalResult/escalate
+=== CONT  TestBuildEvalPrompt
+--- PASS: TestBuildEvalPrompt (0.00s)
+=== CONT  TestEvaluateIncludesBuildTestVet
+--- PASS: TestEvaluateIncludesBuildTestVet (0.00s)
+=== CONT  TestAvailableBinaryNotFound
+=== CONT  TestBuildInvokeArgs
+=== CONT  TestValidateThinkResultBadType
+=== CONT  TestParseEvalResult/retry
+--- PASS: TestParseEvalResult (0.00s)
+    --- PASS: TestParseEvalResult/pass (0.00s)
+    --- PASS: TestParseEvalResult/escalate (0.00s)
+    --- PASS: TestParseEvalResult/retry (0.00s)
+=== CONT  TestParseThinkResult
+=== RUN   TestBuildInvokeArgs/no_model_no_tools
+=== RUN   TestParseThinkResult/question
+=== PAUSE TestParseThinkResult/question
+=== RUN   TestParseThinkResult/info_request
+=== PAUSE TestParseThinkResult/info_request
+=== RUN   TestParseThinkResult/ready
+=== PAUSE TestParseThinkResult/ready
+=== CONT  TestParseThinkResult/question
+=== PAUSE TestBuildInvokeArgs/no_model_no_tools
+=== RUN   TestBuildInvokeArgs/model_and_websearch
+=== PAUSE TestBuildInvokeArgs/model_and_websearch
+=== CONT  TestBuildInvokeArgs/no_model_no_tools
+=== CONT  TestParseThinkResult/info_request
+=== CONT  TestParseThinkResult/ready
+--- PASS: TestValidateThinkResultBadType (0.00s)
+=== CONT  TestBuildInvokeArgs/model_and_websearch
+--- PASS: TestBuildInvokeArgs (0.00s)
+    --- PASS: TestBuildInvokeArgs/no_model_no_tools (0.00s)
+    --- PASS: TestBuildInvokeArgs/model_and_websearch (0.00s)
+--- PASS: TestParseThinkResult (0.00s)
+    --- PASS: TestParseThinkResult/question (0.00s)
+    --- PASS: TestParseThinkResult/ready (0.00s)
+    --- PASS: TestParseThinkResult/info_request (0.00s)
+--- PASS: TestAvailableBinaryNotFound (0.03s)
+PASS
+ok  	github.com/zyrakk/hivemind/internal/engine	0.039s

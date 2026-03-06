@@ -34,6 +34,22 @@ type runtimeConfig struct {
 		BaseURL   string `yaml:"base_url"`
 		Timeout   string `yaml:"timeout"`
 	} `yaml:"glm"`
+	Engine struct {
+		Primary    string `yaml:"primary"`
+		Fallback   string `yaml:"fallback"`
+		ClaudeCode struct {
+			Binary         string `yaml:"binary"`
+			Model          string `yaml:"model"`
+			TimeoutMinutes int    `yaml:"timeout_minutes"`
+			PromptDir      string `yaml:"prompt_dir"`
+			Usage          struct {
+				SoftLimitDaily  int `yaml:"soft_limit_daily"`
+				HardLimitDaily  int `yaml:"hard_limit_daily"`
+				SoftLimitWeekly int `yaml:"soft_limit_weekly"`
+				HardLimitWeekly int `yaml:"hard_limit_weekly"`
+			} `yaml:"usage"`
+		} `yaml:"claude_code"`
+	} `yaml:"engine"`
 	Consultants struct {
 		Claude struct {
 			Enabled             bool    `yaml:"enabled"`
@@ -449,6 +465,16 @@ func defaultRuntimeConfig() runtimeConfig {
 	cfg.GLM.Model = "glm-4.7"
 	cfg.GLM.BaseURL = "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
 	cfg.GLM.Timeout = "60s"
+
+	cfg.Engine.Primary = "glm"
+	cfg.Engine.Fallback = "none"
+	cfg.Engine.ClaudeCode.Binary = "claude"
+	cfg.Engine.ClaudeCode.TimeoutMinutes = 10
+	cfg.Engine.ClaudeCode.PromptDir = "prompts"
+	cfg.Engine.ClaudeCode.Usage.SoftLimitDaily = 12
+	cfg.Engine.ClaudeCode.Usage.HardLimitDaily = 18
+	cfg.Engine.ClaudeCode.Usage.SoftLimitWeekly = 70
+	cfg.Engine.ClaudeCode.Usage.HardLimitWeekly = 100
 
 	cfg.Codex.ApprovalMode = "full-auto"
 	cfg.Codex.TimeoutMins = 30

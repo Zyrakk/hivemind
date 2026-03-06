@@ -1,0 +1,3 @@
+./handlers.go
+./server.go
+./static.go

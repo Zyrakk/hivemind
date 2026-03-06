@@ -72,8 +72,70 @@ spec:
       labels:
         app: hivemind-orchestrator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       nodeSelector:
         kubernetes.io/arch: amd64
+      initContainers:
+        - name: claude-config-init
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              mkdir -p /claude-config/.codex /claude-config/backups
+
+              if [ -z "$ACCOUNT_UUID" ] || [ -z "$EMAIL" ] || [ -z "$ORG_UUID" ] || [ -z "$ONBOARDING_VERSION" ]; then
+                echo "claude-code-auth not fully configured; skipping Claude Code onboarding file"
+                printf '{}\n' > /claude-config/.claude.json
+                exit 0
+              fi
+
+              cat > /claude-config/.claude.json << 'ENDCONFIG'
+              {
+                "hasCompletedOnboarding": true,
+                "lastOnboardingVersion": "$(ONBOARDING_VERSION)",
+                "oauthAccount": {
+                  "accountUuid": "$(ACCOUNT_UUID)",
+                  "emailAddress": "$(EMAIL)",
+                  "organizationUuid": "$(ORG_UUID)"
+                }
+              }
+              ENDCONFIG
+              sed -i "s/\$(ONBOARDING_VERSION)/$ONBOARDING_VERSION/g" /claude-config/.claude.json
+              sed -i "s/\$(ACCOUNT_UUID)/$ACCOUNT_UUID/g" /claude-config/.claude.json
+              sed -i "s/\$(EMAIL)/$EMAIL/g" /claude-config/.claude.json
+              sed -i "s/\$(ORG_UUID)/$ORG_UUID/g" /claude-config/.claude.json
+          env:
+            - name: ACCOUNT_UUID
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-auth
+                  key: account-uuid
+                  optional: true
+            - name: EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-auth
+                  key: email
+                  optional: true
+            - name: ORG_UUID
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-auth
+                  key: organization-uuid
+                  optional: true
+            - name: ONBOARDING_VERSION
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-auth
+                  key: onboarding-version
+                  optional: true
+          volumeMounts:
+            - name: claude-config
+              mountPath: /claude-config
       containers:
         - name: orchestrator
           image: ghcr.io/zyrakk/hivemind:latest
@@ -88,6 +150,10 @@ spec:
               value: /data/hivemind.db
             - name: CONFIG_PATH
               value: /config/config.yaml
+            - name: HOME
+              value: /home/hivemind/.claude
+            - name: CLAUDE_CONFIG_DIR
+              value: /home/hivemind/.claude
             - name: ZAI_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -112,6 +178,12 @@ spec:
                   name: hivemind-secrets
                   key: TELEGRAM_BOT_TOKEN
                   optional: true
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-code-auth
+                  key: oauth-token
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
@@ -119,9 +191,11 @@ spec:
               mountPath: /config/config.yaml
               subPath: config.yaml
             - name: codex-auth
-              mountPath: /root/.codex/auth.json
+              mountPath: /home/hivemind/.claude/.codex/auth.json
               subPath: auth.json
               readOnly: true
+            - name: claude-config
+              mountPath: /home/hivemind/.claude
           readinessProbe:
             httpGet:
               path: /health
@@ -155,6 +229,8 @@ spec:
         - name: codex-auth
           secret:
             secretName: codex-auth
+        - name: claude-config
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

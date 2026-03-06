@@ -1,0 +1,10 @@
+./budget.go
+./claude.go
+./client.go
+./consultant.go
+./gemini.go
+./glm.go
+./types.go
+./claude_test.go
+./gemini_test.go
+./glm_test.go

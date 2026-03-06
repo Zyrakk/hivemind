@@ -1,0 +1,18 @@
+=== RUN   TestCreatePlanReturnsValidPlanAndPersistsTasks
+--- PASS: TestCreatePlanReturnsValidPlanAndPersistsTasks (0.41s)
+=== RUN   TestCreatePlanLowConfidenceConsultsAndRefines
+--- PASS: TestCreatePlanLowConfidenceConsultsAndRefines (0.41s)
+=== RUN   TestCreatePlanWithQuestionsReturnsNeedsInput
+--- PASS: TestCreatePlanWithQuestionsReturnsNeedsInput (0.38s)
+=== RUN   TestExecutePlanRespectsDependencies
+--- PASS: TestExecutePlanRespectsDependencies (0.50s)
+=== RUN   TestExecutePlanRunsEvaluatorAndHandlesIterate
+--- PASS: TestExecutePlanRunsEvaluatorAndHandlesIterate (0.37s)
+=== RUN   TestNotificationsWired
+=== RUN   TestNotificationsWired/task_completed
+=== RUN   TestNotificationsWired/worker_failed
+--- PASS: TestNotificationsWired (0.50s)
+    --- PASS: TestNotificationsWired/task_completed (0.24s)
+    --- PASS: TestNotificationsWired/worker_failed (0.25s)
+PASS
+ok  	github.com/zyrakk/hivemind/internal/planner	2.581s

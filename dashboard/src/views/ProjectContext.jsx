@@ -152,24 +152,24 @@ function MobileCollapsibleSection({ title, count, defaultOpen = false, children 
     <>
       <section className="md:hidden">
         <details open={defaultOpen} className="group border border-hivemind-border bg-hivemind-surface">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[9px] uppercase tracking-[0.1em] text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0">
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-[11px] uppercase tracking-[0.1em] text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0">
             <span className="text-hivemind-dim group-open:hidden">▸</span>
             <span className="hidden text-hivemind-dim group-open:inline">▾</span>
             <span>{title}</span>
             {typeof count === 'number' ? <span className="text-hivemind-dim">[{count}]</span> : null}
           </summary>
-          <div className="border-t border-hivemind-border px-3 py-2">{children}</div>
+          <div className="border-t border-hivemind-border px-4 py-3">{children}</div>
         </details>
       </section>
 
-      <section className="hidden bg-hivemind-surface px-3 py-2.5 md:block">
+      <section className="hidden bg-hivemind-surface px-[18px] py-[14px] md:block">
         <div className="flex items-center gap-1">
-          <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">{title}</span>
+          <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">{title}</span>
           {typeof count === 'number' ? (
-            <span className="text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">[{count}]</span>
+            <span className="text-[10px] uppercase tracking-[0.1em] text-hivemind-dim">[{count}]</span>
           ) : null}
         </div>
-        <div className="mt-2">{children}</div>
+        <div className="mt-3">{children}</div>
       </section>
     </>
   );
@@ -246,7 +246,7 @@ export default function ProjectContext({ apiBaseURL }) {
   const latestEvent = data.recent_events[0] ?? null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-[12px] text-hivemind-text">
       <ProjectCarbonHeader
         id={id}
         projectName={data.project.name}
@@ -258,22 +258,22 @@ export default function ProjectContext({ apiBaseURL }) {
         onBack={() => navigate(`/project/${id}`)}
       />
 
-      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
+      <main className="mx-auto flex w-full max-w-[1280px] flex-1 min-h-0 flex-col gap-[2px] px-5 py-4">
         {connectionError ? <AlertBanner variant="error" message="No connection to the orchestrator" /> : null}
 
         {loading ? (
-          <section className="bg-hivemind-surface px-3 py-3">
-            <p className="border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+          <section className="bg-hivemind-surface px-[18px] py-[14px]">
+            <p className="border border-dashed border-hivemind-border px-4 py-5 text-[11px] text-hivemind-dim">
               Loading context stream...
             </p>
           </section>
         ) : null}
 
-        <section className="grid gap-px md:grid-cols-[minmax(0,1fr)_300px]">
-          <div className="flex min-w-0 flex-col gap-px">
-            <section className="bg-hivemind-surface px-3 py-2.5">
-              <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">BRIEFING</span>
-              <p className="mt-2 text-[10px] leading-[1.6] text-hivemind-muted">{data.context.summary}</p>
+        <section className="grid flex-1 min-h-0 gap-[2px] md:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="flex min-h-0 min-w-0 flex-col gap-[2px]">
+            <section className="bg-hivemind-surface px-[18px] py-[14px]">
+              <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">BRIEFING</span>
+              <p className="mt-3 text-[12px] leading-[1.6] text-hivemind-muted">{data.context.summary}</p>
             </section>
 
             <MobileCollapsibleSection
@@ -287,7 +287,7 @@ export default function ProjectContext({ apiBaseURL }) {
             <ContributeNow content={data.context.contribute_now} />
           </div>
 
-          <div className="flex min-w-0 flex-col gap-px">
+          <div className="flex min-h-0 min-w-0 flex-col gap-[2px]">
             <MobileCollapsibleSection title="LINKS" defaultOpen>
               <QuickLinks quickLinks={data.context.quick_links} />
             </MobileCollapsibleSection>

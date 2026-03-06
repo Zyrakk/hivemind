@@ -223,9 +223,9 @@ function DashboardOverview() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-[12px] text-hivemind-text">
       <header className="sticky top-0 z-30 border-b border-hivemind-border bg-[#0d0d0d]">
-        <div className="mx-auto flex h-[26px] w-full max-w-[1200px] items-center justify-between px-4 text-[9px] sm:px-5">
+        <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between px-5 py-2 text-[11px]">
           <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
             <span className="truncate font-bold text-hivemind-text">HIVEMIND</span>
             <span className="text-hivemind-dim">|</span>
@@ -245,7 +245,7 @@ function DashboardOverview() {
 
       <FlashTicker event={latestEvent} eventCount={eventCount} />
 
-      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
+      <main className="mx-auto flex w-full max-w-[1280px] flex-1 min-h-0 flex-col gap-[2px] px-5 py-4">
         {connectionError ? (
           <AlertBanner variant="error" message="No connection to the orchestrator" />
         ) : null}
@@ -258,22 +258,24 @@ function DashboardOverview() {
           />
         ) : null}
 
-        <GlobalCounters counters={dashboardState.counters} />
+        <section className="grid flex-1 min-h-0 gap-[2px] bg-hivemind-border md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_300px] md:grid-rows-[auto_1fr]">
+          <div className="md:col-span-3">
+            <GlobalCounters counters={dashboardState.counters} />
+          </div>
 
-        <section className="grid gap-px bg-hivemind-border md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_280px]">
-          <section className="bg-hivemind-surface px-3 py-2">
-            <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">PROJECTS</p>
+          <section className="min-h-0 bg-hivemind-surface px-[18px] py-[14px]">
+            <p className="mb-[10px] text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">PROJECTS</p>
             <StatusBar projects={dashboardState.projects} />
 
-            <div className="mt-1 overflow-x-auto">
+            <div className="overflow-x-auto">
               <table className="min-w-full text-left">
                 <thead>
-                  <tr className="border-b border-hivemind-border text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">
-                    <th className="px-2 py-1">NAME</th>
-                    <th className="px-2 py-1">ST</th>
-                    <th className="px-2 py-1">W</th>
-                    <th className="px-2 py-1">T</th>
-                    <th className="px-2 py-1">AGE</th>
+                  <tr className="border-b border-hivemind-border text-[10px] uppercase tracking-[0.1em] text-hivemind-dim">
+                    <th className="px-1.5 py-2">NAME</th>
+                    <th className="px-1.5 py-2">ST</th>
+                    <th className="px-1.5 py-2">W</th>
+                    <th className="px-1.5 py-2">T</th>
+                    <th className="px-1.5 py-2">AGE</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -287,24 +289,26 @@ function DashboardOverview() {
 
           <WorkerList workers={dashboardState.active_workers} />
 
-          <aside className="flex flex-col gap-px bg-hivemind-border">
-            <section className="bg-hivemind-surface px-3 py-2">
-              <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">SYSTEM</p>
+          <aside className="flex min-h-0 flex-col gap-[2px] bg-hivemind-border">
+            <section className="bg-hivemind-surface px-[18px] py-[14px]">
+              <p className="mb-[10px] text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">SYSTEM</p>
 
-              <div className="mt-1 hidden grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[9px] md:grid">
-                <span className="text-hivemind-dim">cluster</span>
-                <span className="text-hivemind-muted">k3s</span>
-                <span className="text-hivemind-dim">store</span>
-                <span className="text-hivemind-muted">sqlite</span>
-                <span className="text-hivemind-dim">tunnel</span>
-                <span className="text-hivemind-muted">cloudflare</span>
-                <span className="text-hivemind-dim">poll</span>
-                <span className="text-hivemind-muted">15s</span>
-                <span className="text-hivemind-dim">ver</span>
-                <span className="text-hivemind-muted">0.3.0</span>
+              <div className="hidden text-[11px] md:block">
+                <div className="grid grid-cols-[auto_1fr] gap-x-3">
+                  <span className="py-[5px] text-hivemind-dim">cluster</span>
+                  <span className="py-[5px] text-hivemind-muted">k3s</span>
+                  <span className="py-[5px] text-hivemind-dim">store</span>
+                  <span className="py-[5px] text-hivemind-muted">sqlite</span>
+                  <span className="py-[5px] text-hivemind-dim">tunnel</span>
+                  <span className="py-[5px] text-hivemind-muted">cloudflare</span>
+                  <span className="py-[5px] text-hivemind-dim">poll</span>
+                  <span className="py-[5px] text-hivemind-muted">15s</span>
+                  <span className="py-[5px] text-hivemind-dim">ver</span>
+                  <span className="py-[5px] text-hivemind-muted">0.3.0</span>
+                </div>
               </div>
 
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] md:hidden">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] md:hidden">
                 <span className="text-hivemind-dim">cluster:k3s</span>
                 <span className="text-hivemind-dim">store:sqlite</span>
                 <span className="text-hivemind-dim">tunnel:cloudflare</span>
@@ -313,9 +317,9 @@ function DashboardOverview() {
               </div>
             </section>
 
-            <section className="bg-hivemind-surface px-3 py-2">
-              <p className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">ENDPOINT</p>
-              <p className="mt-1 break-words text-[9px] text-hivemind-muted">hivemind.zyrak.cloud</p>
+            <section className="flex flex-1 flex-col bg-hivemind-surface px-[18px] py-[14px]">
+              <p className="mb-[10px] text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">ENDPOINT</p>
+              <p className="break-words text-[11px] text-hivemind-muted">hivemind.zyrak.cloud</p>
             </section>
           </aside>
         </section>
