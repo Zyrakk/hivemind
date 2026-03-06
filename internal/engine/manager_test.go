@@ -110,6 +110,9 @@ func TestPrimarySucceeds(t *testing.T) {
 	if fallback.thinkCalls != 0 {
 		t.Fatalf("fallback think calls = %d, want 0", fallback.thinkCalls)
 	}
+	if got := mgr.LastUsedEngine(); got != "claude-code" {
+		t.Fatalf("LastUsedEngine() = %q, want %q", got, "claude-code")
+	}
 }
 
 func TestPrimaryFailsFallbackSucceeds(t *testing.T) {
@@ -147,6 +150,9 @@ func TestPrimaryFailsFallbackSucceeds(t *testing.T) {
 	}
 	if !strings.Contains(reason, "Think failed: boom") {
 		t.Fatalf("reason = %q, want Think failed message", reason)
+	}
+	if got := mgr.LastUsedEngine(); got != "glm" {
+		t.Fatalf("LastUsedEngine() = %q, want %q", got, "glm")
 	}
 }
 

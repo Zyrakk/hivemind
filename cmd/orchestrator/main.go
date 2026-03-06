@@ -18,11 +18,13 @@ import (
 
 	"github.com/zyrakk/hivemind/internal/dashboard"
 	directivepkg "github.com/zyrakk/hivemind/internal/directive"
+	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
 	"github.com/zyrakk/hivemind/internal/notify"
 	"github.com/zyrakk/hivemind/internal/planner"
+	"github.com/zyrakk/hivemind/internal/recon"
 	"github.com/zyrakk/hivemind/internal/state"
 	"gopkg.in/yaml.v3"
 )
@@ -38,16 +40,11 @@ type runtimeConfig struct {
 		Primary    string `yaml:"primary"`
 		Fallback   string `yaml:"fallback"`
 		ClaudeCode struct {
-			Binary         string `yaml:"binary"`
-			Model          string `yaml:"model"`
-			TimeoutMinutes int    `yaml:"timeout_minutes"`
-			PromptDir      string `yaml:"prompt_dir"`
-			Usage          struct {
-				SoftLimitDaily  int `yaml:"soft_limit_daily"`
-				HardLimitDaily  int `yaml:"hard_limit_daily"`
-				SoftLimitWeekly int `yaml:"soft_limit_weekly"`
-				HardLimitWeekly int `yaml:"hard_limit_weekly"`
-			} `yaml:"usage"`
+			Binary         string                    `yaml:"binary"`
+			Model          string                    `yaml:"model"`
+			TimeoutMinutes int                       `yaml:"timeout_minutes"`
+			PromptDir      string                    `yaml:"prompt_dir"`
+			Usage          engine.UsageTrackerConfig `yaml:"usage"`
 		} `yaml:"claude_code"`
 	} `yaml:"engine"`
 	Consultants struct {
@@ -228,12 +225,45 @@ func main() {
 		Logger:               logger,
 	})
 
+	reconRunner := recon.NewRunner(logger)
+
+	var ccEngine *engine.ClaudeCodeEngine
+	engines := map[string]engine.Engine{}
+	if glmClient != nil {
+		engines["glm"] = engine.NewGLMEngine(glmClient, logger)
+	}
+	if cfg.Engine.Primary == "claude-code" || cfg.Engine.Fallback == "claude-code" {
+		ccEngine = engine.NewClaudeCodeEngine(engine.ClaudeCodeConfig{
+			Binary:         defaultString(cfg.Engine.ClaudeCode.Binary, "claude"),
+			Model:          cfg.Engine.ClaudeCode.Model,
+			TimeoutMinutes: cfg.Engine.ClaudeCode.TimeoutMinutes,
+			PromptDir:      defaultString(cfg.Engine.ClaudeCode.PromptDir, "prompts"),
+			Usage:          cfg.Engine.ClaudeCode.Usage,
+		}, logger)
+		engines["claude-code"] = ccEngine
+	}
+
+	engineMgr := engine.NewManager(engine.ManagerConfig{
+		PrimaryEngine:  defaultString(cfg.Engine.Primary, "glm"),
+		FallbackEngine: defaultString(cfg.Engine.Fallback, "none"),
+	}, engines, logger)
+
 	plannerService := planner.New(glmClient, consultants, launcherService, store, "prompts", logger)
 	evaluatorService := evaluator.New(glmClient, consultants, launcherService, store, logger)
+	plannerService.SetEngine(engineMgr)
+	plannerService.SetRecon(reconRunner)
+	evaluatorService.SetEngine(engineMgr)
+	evaluatorService.SetRecon(reconRunner)
 	plannerService.SetEvaluator(plannerEvaluatorBridge{
 		evaluator: evaluatorService,
 		logger:    logger,
 	})
+
+	logger.Info("engine configured",
+		slog.String("primary", defaultString(cfg.Engine.Primary, "glm")),
+		slog.String("fallback", defaultString(cfg.Engine.Fallback, "none")),
+		slog.String("active", engineMgr.ActiveEngine(ctx)),
+	)
 
 	telegramTokenEnv := defaultEnvName(cfg.Telegram.BotTokenEnv, "TELEGRAM_BOT_TOKEN")
 	telegramToken := strings.TrimSpace(os.Getenv(telegramTokenEnv))
@@ -256,6 +286,14 @@ func main() {
 			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
 			telegramNotifier = nil
 		} else {
+			engineMgr.SetSwitchCallback(func(from, to, reason string) {
+				telegramNotifier.NotifyEngineSwitch(from, to, reason)
+			})
+			if ccEngine != nil && ccEngine.UsageTracker() != nil {
+				ccEngine.UsageTracker().SetAlertCallback(func(msg string) {
+					telegramNotifier.QueueMessage(msg)
+				})
+			}
 			plannerService.SetNotifier(telegramNotifier)
 			evaluatorService.SetNotifier(telegramNotifier)
 

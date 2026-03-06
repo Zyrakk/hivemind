@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 )
 
 var ErrNoEngineAvailable = errors.New("no engine available")
@@ -16,7 +17,9 @@ type Manager struct {
 	primary  Engine
 	fallback Engine
 	logger   *slog.Logger
+	mu       sync.RWMutex
 	onSwitch func(from, to, reason string)
+	lastUsed string
 }
 
 type ManagerConfig struct {
@@ -74,7 +77,20 @@ func (m *Manager) SetSwitchCallback(fn func(from, to, reason string)) {
 	if m == nil {
 		return
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.onSwitch = fn
+}
+
+func (m *Manager) LastUsedEngine() string {
+	if m == nil {
+		return ""
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.lastUsed
 }
 
 func (m *Manager) Think(ctx context.Context, req ThinkRequest) (*ThinkResult, error) {
@@ -118,8 +134,13 @@ func (m *Manager) notifySwitch(from, to, reason string) {
 	if m == nil {
 		return
 	}
-	if m.onSwitch != nil {
-		m.onSwitch(from, to, reason)
+
+	m.mu.RLock()
+	callback := m.onSwitch
+	m.mu.RUnlock()
+
+	if callback != nil {
+		callback(from, to, reason)
 	}
 	if m.logger != nil {
 		m.logger.Warn("engine switch",
@@ -127,6 +148,16 @@ func (m *Manager) notifySwitch(from, to, reason string) {
 			slog.String("to", to),
 			slog.String("reason", reason))
 	}
+}
+
+func (m *Manager) recordLastUsed(name string) {
+	if m == nil {
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastUsed = strings.TrimSpace(name)
 }
 
 func runWithFallback[T any](
@@ -145,6 +176,7 @@ func runWithFallback[T any](
 	if primary.Available(ctx) {
 		result, err := call(primary)
 		if err == nil {
+			m.recordLastUsed(primary.Name())
 			return result, nil
 		}
 		reason = fmt.Sprintf("%s failed: %s", operation, err.Error())
@@ -168,6 +200,7 @@ func runWithFallback[T any](
 		m.notifySwitch(primary.Name(), fallback.Name(), reason)
 		result, err := call(fallback)
 		if err == nil {
+			m.recordLastUsed(fallback.Name())
 			return result, nil
 		}
 		if m.logger != nil {

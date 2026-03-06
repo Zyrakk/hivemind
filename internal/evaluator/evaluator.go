@@ -16,9 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/recon"
 	"github.com/zyrakk/hivemind/internal/state"
+	"gopkg.in/yaml.v3"
 )
 
 type evaluatorLLM interface {
@@ -29,6 +32,15 @@ type evaluatorLauncher interface {
 	LaunchWorker(ctx context.Context, task launcher.Task, agentsMD string, cache string) (*launcher.Session, error)
 	GetSession(sessionID string) (launcher.Session, bool)
 	GetWorkDir() string
+}
+
+type evalEngine interface {
+	Evaluate(ctx context.Context, req engine.EvalRequest) (*engine.EvalResult, error)
+	ActiveEngine(ctx context.Context) string
+}
+
+type evalRecon interface {
+	Run(ctx context.Context, commands []string) (*recon.Result, error)
 }
 
 type EvalResult struct {
@@ -56,6 +68,8 @@ type Evaluator struct {
 	consultants []llm.ConsultantClient
 	launcher    evaluatorLauncher
 	notifier    notifier
+	engine      evalEngine
+	recon       evalRecon
 	db          *state.Store
 	logger      *slog.Logger
 
@@ -104,6 +118,26 @@ func (e *Evaluator) SetNotifier(n notifier) {
 	e.notifier = n
 }
 
+func (e *Evaluator) SetEngine(engine evalEngine) {
+	if e == nil {
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.engine = engine
+}
+
+func (e *Evaluator) SetRecon(recon evalRecon) {
+	if e == nil {
+		return
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.recon = recon
+}
+
 func (e *Evaluator) Evaluate(ctx context.Context, diff, criteria string) (*llm.Evaluation, error) {
 	if e == nil || e.glm == nil {
 		return nil, llm.ErrNotImplemented
@@ -116,12 +150,14 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 	if e == nil {
 		return nil, fmt.Errorf("evaluator is nil")
 	}
-	if e.glm == nil {
-		return nil, fmt.Errorf("glm client is not configured")
-	}
 	e.mu.Lock()
 	evalNotifier := e.notifier
+	eng := e.engine
+	rc := e.recon
 	e.mu.Unlock()
+	if eng == nil && e.glm == nil {
+		return nil, fmt.Errorf("glm client is not configured")
+	}
 
 	taskRecord, projectName, err := e.findTaskForSession(ctx, session)
 	if err != nil {
@@ -141,11 +177,55 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 		}
 	}
 
-	evaluation, err := e.glm.Evaluate(ctx, taskRecord.Description, diff, agentsMD)
+	var evaluation *llm.Evaluation
+	if eng != nil {
+		var buildOut, testOut, vetOut string
+		if rc != nil {
+			repoPath := resolveRepoPathForEval(projectName, session, launcherWorkDir(e.launcher))
+			if repoPath != "" {
+				buildResult, _ := rc.Run(ctx, []string{fmt.Sprintf("cd %s && go build ./... 2>&1", shellQuotePath(repoPath))})
+				if buildResult != nil {
+					buildOut = buildResult.Output
+				}
+				testResult, _ := rc.Run(ctx, []string{fmt.Sprintf("cd %s && go test ./... 2>&1 | head -100", shellQuotePath(repoPath))})
+				if testResult != nil {
+					testOut = testResult.Output
+				}
+				vetResult, _ := rc.Run(ctx, []string{fmt.Sprintf("cd %s && go vet ./... 2>&1", shellQuotePath(repoPath))})
+				if vetResult != nil {
+					vetOut = vetResult.Output
+				}
+			}
+		}
+
+		engineResult, engineErr := eng.Evaluate(ctx, engine.EvalRequest{
+			TaskID:      strconv.FormatInt(taskRecord.ID, 10),
+			TaskTitle:   taskRecord.Title,
+			TaskDesc:    taskRecord.Description,
+			DiffContent: diff,
+			BuildOutput: buildOut,
+			TestOutput:  testOut,
+			VetOutput:   vetOut,
+			AgentsMD:    agentsMD,
+		})
+		if engineErr == nil {
+			evaluation = convertEngineEvalToLLMEval(engineResult)
+			goto postEval
+		}
+
+		e.logger.Warn("engine evaluate failed, falling back to GLM",
+			slog.String("error", engineErr.Error()))
+		if e.glm == nil {
+			return nil, fmt.Errorf("engine evaluation failed: %w", engineErr)
+		}
+	}
+
+	evaluation, err = e.glm.Evaluate(ctx, taskRecord.Description, diff, agentsMD)
 	if err != nil {
 		return nil, fmt.Errorf("glm evaluation failed: %w", err)
 	}
 
+postEval:
 	consultantUsed := false
 	forceIterate := false
 	if evaluation.Confidence < 0.5 {
@@ -455,6 +535,170 @@ func readProjectAgentsForEvaluation(projectID int64, projectName string) (string
 	}
 
 	return "", fmt.Errorf("agents file not found for project %d (%s)", projectID, projectName)
+}
+
+func convertEngineEvalToLLMEval(result *engine.EvalResult) *llm.Evaluation {
+	if result == nil {
+		return nil
+	}
+
+	issues := make([]llm.Issue, 0, len(result.Suggestions))
+	for _, suggestion := range result.Suggestions {
+		suggestion = strings.TrimSpace(suggestion)
+		if suggestion == "" {
+			continue
+		}
+		issues = append(issues, llm.Issue{
+			Severity:    "medium",
+			Description: suggestion,
+			Suggestion:  suggestion,
+		})
+	}
+
+	verdict := strings.ToLower(strings.TrimSpace(result.Verdict))
+	evaluation := &llm.Evaluation{
+		Verdict:      mapEngineVerdict(verdict),
+		Confidence:   result.Confidence,
+		Completeness: result.Confidence,
+		Correctness:  result.Confidence,
+		Conventions:  result.Confidence,
+		ScopeOK:      verdict != "retry",
+		Issues:       issues,
+		Summary:      strings.TrimSpace(result.Analysis),
+	}
+
+	switch verdict {
+	case "pass":
+		evaluation.ScopeOK = true
+		if evaluation.Correctness < 0.7 {
+			evaluation.Correctness = 0.7
+		}
+	case "retry":
+		evaluation.ScopeOK = false
+		if evaluation.Correctness > 0.4 {
+			evaluation.Correctness = 0.4
+		}
+	case "escalate":
+		evaluation.ScopeOK = true
+		if evaluation.Correctness < 0.6 {
+			evaluation.Correctness = 0.6
+		}
+	}
+
+	return evaluation
+}
+
+func mapEngineVerdict(verdict string) string {
+	switch verdict {
+	case "pass":
+		return "accept"
+	case "retry":
+		return "iterate"
+	default:
+		return "escalate"
+	}
+}
+
+func resolveRepoPathForEval(projectName string, session launcher.Session, workDir string) string {
+	candidates := make([]string, 0, 4)
+	if projectName != "" {
+		candidates = append(candidates, resolveRepoPath(projectName))
+	}
+	if session.ProjectID > 0 {
+		candidates = append(candidates, resolveRepoPath(strconv.FormatInt(session.ProjectID, 10)))
+	}
+	if strings.TrimSpace(workDir) != "" {
+		candidates = append(candidates, strings.TrimSpace(workDir))
+	}
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func resolveRepoPath(projectRef string) string {
+	projectRef = strings.TrimSpace(projectRef)
+	if projectRef == "" {
+		return ""
+	}
+
+	candidates := []string{projectRef}
+	if filepath.IsAbs(projectRef) {
+		candidates = append(candidates, projectRef)
+	}
+
+	if cwd, err := os.Getwd(); err == nil && strings.EqualFold(filepath.Base(cwd), projectRef) {
+		candidates = append(candidates, cwd)
+	}
+
+	if reposDir := configuredReposDir(); reposDir != "" {
+		candidates = append(candidates,
+			filepath.Join(reposDir, projectRef),
+			filepath.Join(reposDir, strings.ToLower(projectRef)),
+		)
+	}
+
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func configuredReposDir() string {
+	for _, envName := range []string{"HIVEMIND_REPOS_DIR", "CODEX_REPOS_DIR", "REPOS_DIR"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+
+	configPath := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var cfg struct {
+		Codex struct {
+			ReposDir string `yaml:"repos_dir"`
+		} `yaml:"codex"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(cfg.Codex.ReposDir)
+}
+
+func launcherWorkDir(launcher evaluatorLauncher) string {
+	if launcher == nil {
+		return ""
+	}
+	return strings.TrimSpace(launcher.GetWorkDir())
+}
+
+func shellQuotePath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return path
+	}
+	return "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
 }
 
 func decideAction(evaluation *llm.Evaluation, forceIterate bool, retryCount int) string {

@@ -56,9 +56,14 @@ type plannerCreator interface {
 	CreatePlan(ctx context.Context, directive, projectID string) (*planner.PlanResult, error)
 }
 
+type plannerRebuilder interface {
+	RebuildPlan(ctx context.Context, planID, feedback string) (*planner.PlanResult, error)
+}
+
 type plannerService interface {
 	plannerExecutor
 	plannerCreator
+	plannerRebuilder
 }
 
 type workerController interface {
@@ -88,11 +93,12 @@ type TelegramBot struct {
 	outbox           chan string
 	logger           *slog.Logger
 
-	plannerCreate plannerCreator
-	store         stateStore
-	plannerExec   plannerExecutor
-	workers       workerController
-	consultants   []llm.ConsultantClient
+	plannerCreate  plannerCreator
+	plannerRebuild plannerRebuilder
+	store          stateStore
+	plannerExec    plannerExecutor
+	workers        workerController
+	consultants    []llm.ConsultantClient
 
 	inputResolver func(ctx context.Context, approval *PendingApproval, response string) error
 	sendMessageFn func(text string) error
@@ -130,6 +136,7 @@ func NewTelegramBot(
 		outbox:           make(chan string, defaultOutboxBuffer),
 		logger:           logger,
 		plannerCreate:    planner,
+		plannerRebuild:   planner,
 		store:            db,
 		plannerExec:      planner,
 		nowFn:            time.Now,
@@ -188,6 +195,11 @@ func (t *TelegramBot) Start(ctx context.Context) error {
 	if t.plannerExec == nil {
 		if svc, ok := t.plannerCreate.(plannerExecutor); ok {
 			t.plannerExec = svc
+		}
+	}
+	if t.plannerRebuild == nil {
+		if svc, ok := t.plannerCreate.(plannerRebuilder); ok {
+			t.plannerRebuild = svc
 		}
 	}
 	if t.nowFn == nil {
@@ -312,6 +324,35 @@ func (t *TelegramBot) NotifyConsultantUsed(ctx context.Context, consultantName, 
 
 func (t *TelegramBot) NotifyBudgetWarning(ctx context.Context, consultantName string, percentUsed float64) error {
 	return t.enqueueMessage(ctx, FormatBudgetWarningMessage(consultantName, percentUsed))
+}
+
+func (t *TelegramBot) QueueMessage(message string) {
+	if t == nil {
+		return
+	}
+	if err := t.enqueueMessage(context.Background(), message); err != nil && !errors.Is(err, ErrNotifierNotRunning) {
+		if t.logger != nil {
+			t.logger.Warn("telegram queue message failed", slog.Any("error", err))
+		}
+	}
+}
+
+func (t *TelegramBot) NotifyEngineSwitch(from, to, reason string) {
+	if t == nil {
+		return
+	}
+	if err := t.enqueueMessage(context.Background(), formatEscapedLines(
+		fmt.Sprintf(
+			"▸ Engine switch: %s → %s. Reason: %s",
+			strings.TrimSpace(from),
+			strings.TrimSpace(to),
+			strings.TrimSpace(reason),
+		),
+	)); err != nil && !errors.Is(err, ErrNotifierNotRunning) {
+		if t.logger != nil {
+			t.logger.Warn("engine switch notification failed", slog.Any("error", err))
+		}
+	}
 }
 
 func (t *TelegramBot) RegisterPendingApproval(approval PendingApproval) {
@@ -704,35 +745,38 @@ func (t *TelegramBot) cmdReject(ctx context.Context, args string) (string, error
 		reason = strings.TrimSpace(strings.Join(parts[1:], " "))
 	}
 
-	t.approvalsMu.Lock()
+	t.approvalsMu.RLock()
 	approval, ok := t.pendingApprovals[approvalID]
 	if !ok {
-		t.approvalsMu.Unlock()
+		t.approvalsMu.RUnlock()
 		return formatEscapedLines(fmt.Sprintf("✗ Approval not found: %s", approvalID)), nil
 	}
+	copyApproval := *approval
+	t.approvalsMu.RUnlock()
 
 	var err error
-	switch strings.ToLower(strings.TrimSpace(approval.Type)) {
+	switch strings.ToLower(strings.TrimSpace(copyApproval.Type)) {
 	case "plan":
-		err = t.rejectPlan(ctx, approval, reason)
+		err = t.rejectPlan(ctx, &copyApproval, reason)
 	case "pr":
-		err = t.markPRApproval(ctx, approval, false, reason)
+		err = t.markPRApproval(ctx, &copyApproval, false, reason)
 	case "input":
-		err = t.rejectInput(ctx, approval, reason)
+		err = t.rejectInput(ctx, &copyApproval, reason)
 	default:
-		err = fmt.Errorf("approval type %q is not supported", approval.Type)
+		err = fmt.Errorf("approval type %q is not supported", copyApproval.Type)
 	}
 
 	if err == nil {
+		t.approvalsMu.Lock()
 		delete(t.pendingApprovals, approvalID)
+		t.approvalsMu.Unlock()
 	}
-	t.approvalsMu.Unlock()
 
 	if err != nil {
 		return "", err
 	}
 
-	return formatEscapedLines(fmt.Sprintf("✓ Rejected: %s", approval.Description)), nil
+	return formatEscapedLines(fmt.Sprintf("✓ Rejected: %s", copyApproval.Description)), nil
 }
 
 func (t *TelegramBot) cmdPause(ctx context.Context, args string) (string, error) {
@@ -863,13 +907,18 @@ func formatPlanSummary(projectRef string, result *planner.PlanResult) string {
 		return formatEscapedLines("✗ Empty plan result.")
 	}
 
+	engineName := strings.TrimSpace(result.Engine)
+	if engineName == "" {
+		engineName = "glm"
+	}
+
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("▸ Plan for %s\n", projectRef))
+	sb.WriteString(fmt.Sprintf("▸ Plan for %s [engine: %s] (%d tasks):\n", projectRef, engineName, len(result.Plan.Tasks)))
 	sb.WriteString(fmt.Sprintf("Confidence: %.0f%%\n", result.Plan.Confidence*100))
 	if result.ConsultantUsed {
 		sb.WriteString("→ Validated by consultant\n")
 	}
-	sb.WriteString(fmt.Sprintf("Tasks: %d\n\n", len(result.Plan.Tasks)))
+	sb.WriteString("\n")
 
 	for i, task := range result.Plan.Tasks {
 		title := strings.TrimSpace(task.Title)
@@ -968,11 +1017,42 @@ func (t *TelegramBot) rejectPlan(ctx context.Context, approval *PendingApproval,
 		}
 	}
 
-	return t.store.AppendEvent(ctx, state.Event{
+	if err := t.store.AppendEvent(ctx, state.Event{
 		ProjectID:   projectID,
 		EventType:   "plan_rejected",
 		Description: fmt.Sprintf("Plan rejected: %s. Reason: %s", approval.Description, strings.TrimSpace(reason)),
+	}); err != nil {
+		return err
+	}
+
+	if t.plannerRebuild == nil {
+		return nil
+	}
+
+	rebuilt, rebuildErr := t.plannerRebuild.RebuildPlan(ctx, approval.ID, reason)
+	if rebuildErr != nil {
+		t.logger.Warn("plan rebuild failed after rejection",
+			slog.String("plan_id", approval.ID),
+			slog.Any("error", rebuildErr))
+		return nil
+	}
+	if rebuilt == nil || rebuilt.Plan == nil {
+		return nil
+	}
+
+	if err := t.store.UpdateProjectStatus(ctx, projectID, state.ProjectStatusWorking); err != nil {
+		return err
+	}
+
+	t.RegisterPendingApproval(PendingApproval{
+		ID:          rebuilt.PlanID,
+		Type:        "plan",
+		ProjectID:   approval.ProjectID,
+		Description: approval.Description,
+		AcceptsText: false,
 	})
+
+	return t.enqueueMessage(ctx, formatPlanSummary(approval.ProjectID, rebuilt))
 }
 
 func (t *TelegramBot) resolveInputWithoutText(ctx context.Context, approval *PendingApproval) error {

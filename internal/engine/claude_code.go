@@ -24,18 +24,20 @@ const (
 var shellSegmentSplitPattern = regexp.MustCompile(`\|\||&&|[|;&]`)
 
 type ClaudeCodeConfig struct {
-	Binary         string `yaml:"binary"`
-	Model          string `yaml:"model"`
-	TimeoutMinutes int    `yaml:"timeout_minutes"`
-	PromptDir      string `yaml:"prompt_dir"`
+	Binary         string             `yaml:"binary"`
+	Model          string             `yaml:"model"`
+	TimeoutMinutes int                `yaml:"timeout_minutes"`
+	PromptDir      string             `yaml:"prompt_dir"`
+	Usage          UsageTrackerConfig `yaml:"usage"`
 }
 
 type ClaudeCodeEngine struct {
-	binary    string
-	model     string
-	timeout   time.Duration
-	promptDir string
-	logger    *slog.Logger
+	binary       string
+	model        string
+	timeout      time.Duration
+	promptDir    string
+	logger       *slog.Logger
+	usageTracker *UsageTracker
 }
 
 type invokeResult struct {
@@ -66,12 +68,18 @@ func NewClaudeCodeEngine(cfg ClaudeCodeConfig, logger *slog.Logger) *ClaudeCodeE
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
+	var usageTracker *UsageTracker
+	if !cfg.Usage.isZero() {
+		usageTracker = NewUsageTracker(cfg.Usage, logger)
+	}
+
 	return &ClaudeCodeEngine{
-		binary:    binary,
-		model:     strings.TrimSpace(cfg.Model),
-		timeout:   timeout,
-		promptDir: promptDir,
-		logger:    logger,
+		binary:       binary,
+		model:        strings.TrimSpace(cfg.Model),
+		timeout:      timeout,
+		promptDir:    promptDir,
+		logger:       logger,
+		usageTracker: usageTracker,
 	}
 }
 
@@ -156,18 +164,29 @@ func (e *ClaudeCodeEngine) Name() string {
 	return "claude-code"
 }
 
+func (e *ClaudeCodeEngine) UsageTracker() *UsageTracker {
+	if e == nil {
+		return nil
+	}
+
+	return e.usageTracker
+}
+
 func (e *ClaudeCodeEngine) Available(context.Context) bool {
 	if e == nil {
 		return false
 	}
 
 	_, err := exec.LookPath(e.binary)
-	return err == nil
+	return err == nil && (e.usageTracker == nil || e.usageTracker.CanInvoke())
 }
 
 func (e *ClaudeCodeEngine) invoke(ctx context.Context, systemPrompt, userPrompt string, allowWebSearch bool) (*invokeResult, error) {
 	if e == nil {
 		return nil, errors.New("claude code engine is nil")
+	}
+	if e.usageTracker != nil && !e.usageTracker.CanInvoke() {
+		return nil, fmt.Errorf("claude code blocked: %s", e.usageTracker.BlockReason())
 	}
 
 	combinedPrompt := buildCombinedPrompt(systemPrompt, userPrompt)
@@ -204,6 +223,10 @@ func (e *ClaudeCodeEngine) invoke(ctx context.Context, systemPrompt, userPrompt 
 	result, err := parseInvokeOutput(outputBytes)
 	if err != nil {
 		return nil, err
+	}
+
+	if e.usageTracker != nil {
+		e.usageTracker.Record(result.InputTokens, result.OutputTokens)
 	}
 
 	model := strings.TrimSpace(result.Model)

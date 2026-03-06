@@ -2,15 +2,19 @@ package evaluator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/recon"
 	"github.com/zyrakk/hivemind/internal/state"
 )
 
@@ -199,9 +203,114 @@ func TestEvaluateWorkerOutputEscalateMarksNeedsInputAndCreatesEvent(t *testing.T
 	}
 }
 
+func TestEvaluateWorkerOutputUsesEngineWithRecon(t *testing.T) {
+	store, projectID, _, workerID, cleanup := setupEvaluatorTestEnv(t)
+	defer cleanup()
+
+	glm := &mockEvaluatorGLM{
+		evaluation: &llm.Evaluation{Verdict: "accept", Confidence: 0.9, Correctness: 0.9, ScopeOK: true},
+	}
+	launch := &mockEvaluatorLauncher{}
+	engineMock := &mockEvalEngine{
+		result: &engine.EvalResult{
+			Verdict:    "pass",
+			Analysis:   "Looks good",
+			Confidence: 0.91,
+		},
+	}
+	reconMock := &mockEvalRecon{}
+
+	eval := NewWithDeps(glm, nil, launch, store, nil)
+	eval.SetEngine(engineMock)
+	eval.SetRecon(reconMock)
+
+	result, err := eval.EvaluateWorkerOutput(context.Background(), launcher.Session{
+		SessionID: "session-engine",
+		ProjectID: projectID,
+		Branch:    "feature/task",
+		Status:    state.WorkerStatusCompleted,
+		WorkerID:  workerID,
+		Diff:      "diff --git a/file b/file",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWorkerOutput returned error: %v", err)
+	}
+	if result.Action != "accept" {
+		t.Fatalf("expected action accept, got %s", result.Action)
+	}
+	if engineMock.calls() != 1 {
+		t.Fatalf("engine calls = %d, want 1", engineMock.calls())
+	}
+	if glm.calls() != 0 {
+		t.Fatalf("glm calls = %d, want 0", glm.calls())
+	}
+
+	req := engineMock.lastReq()
+	if req.BuildOutput != "build ok" {
+		t.Fatalf("BuildOutput = %q, want %q", req.BuildOutput, "build ok")
+	}
+	if req.TestOutput != "test ok" {
+		t.Fatalf("TestOutput = %q, want %q", req.TestOutput, "test ok")
+	}
+	if req.VetOutput != "vet ok" {
+		t.Fatalf("VetOutput = %q, want %q", req.VetOutput, "vet ok")
+	}
+	if req.DiffContent != "diff --git a/file b/file" {
+		t.Fatalf("DiffContent = %q, want original diff", req.DiffContent)
+	}
+	if reconMock.calls() != 3 {
+		t.Fatalf("recon calls = %d, want 3", reconMock.calls())
+	}
+}
+
+func TestEvaluateWorkerOutputEngineFailureFallsBackToGLM(t *testing.T) {
+	store, projectID, _, workerID, cleanup := setupEvaluatorTestEnv(t)
+	defer cleanup()
+
+	glm := &mockEvaluatorGLM{
+		evaluation: &llm.Evaluation{
+			Verdict:      "accept",
+			Confidence:   0.88,
+			Correctness:  0.89,
+			ScopeOK:      true,
+			Completeness: 0.87,
+			Conventions:  0.9,
+			Summary:      "GLM fallback accepted",
+		},
+	}
+	launch := &mockEvaluatorLauncher{}
+	engineMock := &mockEvalEngine{err: errors.New("engine failed")}
+
+	eval := NewWithDeps(glm, nil, launch, store, nil)
+	eval.SetEngine(engineMock)
+
+	result, err := eval.EvaluateWorkerOutput(context.Background(), launcher.Session{
+		SessionID: "session-fallback",
+		ProjectID: projectID,
+		Branch:    "feature/task",
+		Status:    state.WorkerStatusCompleted,
+		WorkerID:  workerID,
+		Diff:      "diff --git a/file b/file",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWorkerOutput returned error: %v", err)
+	}
+	if result.Action != "accept" {
+		t.Fatalf("expected action accept, got %s", result.Action)
+	}
+	if engineMock.calls() != 1 {
+		t.Fatalf("engine calls = %d, want 1", engineMock.calls())
+	}
+	if glm.calls() != 1 {
+		t.Fatalf("glm calls = %d, want 1", glm.calls())
+	}
+}
+
 type mockEvaluatorGLM struct {
 	evaluation *llm.Evaluation
 	err        error
+	mu         sync.Mutex
+	callCount  int
 }
 
 func (m *mockEvaluatorGLM) Evaluate(ctx context.Context, task, diff, agentsMD string) (*llm.Evaluation, error) {
@@ -209,10 +318,105 @@ func (m *mockEvaluatorGLM) Evaluate(ctx context.Context, task, diff, agentsMD st
 	_ = task
 	_ = diff
 	_ = agentsMD
+	m.mu.Lock()
+	m.callCount++
+	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.evaluation, nil
+}
+
+func (m *mockEvaluatorGLM) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callCount
+}
+
+type mockEvalEngine struct {
+	mu sync.Mutex
+
+	result  *engine.EvalResult
+	err     error
+	reqs    []engine.EvalRequest
+	current string
+}
+
+func (m *mockEvalEngine) Evaluate(ctx context.Context, req engine.EvalRequest) (*engine.EvalResult, error) {
+	_ = ctx
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.reqs = append(m.reqs, req)
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.result == nil {
+		return &engine.EvalResult{}, nil
+	}
+	out := *m.result
+	if m.result.Suggestions != nil {
+		out.Suggestions = append([]string(nil), m.result.Suggestions...)
+	}
+	return &out, nil
+}
+
+func (m *mockEvalEngine) ActiveEngine(context.Context) string {
+	if m.current == "" {
+		return "claude-code"
+	}
+	return m.current
+}
+
+func (m *mockEvalEngine) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.reqs)
+}
+
+func (m *mockEvalEngine) lastReq() engine.EvalRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.reqs[len(m.reqs)-1]
+}
+
+type mockEvalRecon struct {
+	mu       sync.Mutex
+	commands []string
+}
+
+func (m *mockEvalRecon) Run(ctx context.Context, commands []string) (*recon.Result, error) {
+	_ = ctx
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(commands) > 0 {
+		m.commands = append(m.commands, commands[0])
+	}
+
+	output := ""
+	if len(commands) > 0 {
+		switch {
+		case strings.Contains(commands[0], "go build ./..."):
+			output = "build ok"
+		case strings.Contains(commands[0], "go test ./..."):
+			output = "test ok"
+		case strings.Contains(commands[0], "go vet ./..."):
+			output = "vet ok"
+		default:
+			output = "unknown"
+		}
+	}
+
+	return &recon.Result{Output: output}, nil
+}
+
+func (m *mockEvalRecon) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.commands)
 }
 
 type mockEvaluatorLauncher struct {

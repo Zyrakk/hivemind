@@ -15,10 +15,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
+	"github.com/zyrakk/hivemind/internal/recon"
 	"github.com/zyrakk/hivemind/internal/state"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -40,6 +43,18 @@ type planEvaluator interface {
 	HandleWorkerCompletionDetailed(ctx context.Context, sessionID string) (*evaluator.CompletionResult, error)
 }
 
+type plannerEngine interface {
+	Think(ctx context.Context, req engine.ThinkRequest) (*engine.ThinkResult, error)
+	Propose(ctx context.Context, req engine.ProposeRequest) (*engine.PlanResult, error)
+	Rebuild(ctx context.Context, req engine.RebuildRequest) (*engine.PlanResult, error)
+	ActiveEngine(ctx context.Context) string
+}
+
+type plannerRecon interface {
+	RunDefault(ctx context.Context, repoPath string) (*recon.Result, error)
+	Run(ctx context.Context, commands []string) (*recon.Result, error)
+}
+
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
 	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
@@ -52,6 +67,7 @@ type PlanResult struct {
 	Status         string        `json:"status"`
 	NeedsInput     bool          `json:"needs_input"`
 	ConsultantUsed bool          `json:"consultant_used"`
+	Engine         string        `json:"engine,omitempty"`
 }
 
 type plannedTask struct {
@@ -71,8 +87,11 @@ type storedPlan struct {
 	PlanID     string
 	ProjectID  int64
 	ProjectRef string
+	Directive  string
 	AgentsMD   string
 	Cache      string
+	Plan       *llm.TaskPlan
+	Engine     string
 	Tasks      []plannedTask
 }
 
@@ -82,6 +101,8 @@ type Planner struct {
 	launcher    plannerLauncher
 	evaluator   planEvaluator
 	notifier    notifier
+	engine      plannerEngine
+	recon       plannerRecon
 	db          *state.Store
 	promptsDir  string
 	logger      *slog.Logger
@@ -147,6 +168,26 @@ func (p *Planner) SetNotifier(n notifier) {
 	p.notifier = n
 }
 
+func (p *Planner) SetEngine(e plannerEngine) {
+	if p == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.engine = e
+}
+
+func (p *Planner) SetRecon(r plannerRecon) {
+	if p == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.recon = r
+}
+
 func (p *Planner) BuildPlan(ctx context.Context, directive, agentsMD string) (*llm.TaskPlan, error) {
 	if p == nil || p.glm == nil {
 		return nil, llm.ErrNotImplemented
@@ -159,9 +200,6 @@ func (p *Planner) CreatePlan(ctx context.Context, directive string, projectID st
 	if p == nil {
 		return nil, fmt.Errorf("planner is nil")
 	}
-	if p.glm == nil {
-		return nil, fmt.Errorf("glm client is not configured")
-	}
 	if strings.TrimSpace(directive) == "" {
 		return nil, fmt.Errorf("directive is required")
 	}
@@ -172,98 +210,102 @@ func (p *Planner) CreatePlan(ctx context.Context, directive string, projectID st
 	}
 	cache := loadRelevantCache(projectID)
 
-	combinedContext := strings.TrimSpace(agentsMD)
-	if strings.TrimSpace(cache) != "" {
-		combinedContext = combinedContext + "\n\nSession cache:\n" + cache
+	p.mu.Lock()
+	eng := p.engine
+	rc := p.recon
+	p.mu.Unlock()
+
+	var (
+		plan       *llm.TaskPlan
+		engineName = "glm"
+	)
+
+	if eng != nil {
+		enginePlan, engineErr := p.createPlanViaEngine(ctx, eng, rc, directive, projectID, agentsMD, cache)
+		if engineErr == nil {
+			plan = convertEnginePlanToLLMPlan(enginePlan)
+			engineName = resolvePlanEngineName(ctx, eng)
+		} else {
+			if isEngineNeedsInputError(engineErr) {
+				return nil, engineErr
+			}
+			p.logger.Warn("engine planning failed, falling back to GLM",
+				slog.String("error", engineErr.Error()))
+		}
 	}
 
-	plan, err := p.glm.Plan(ctx, directive, combinedContext)
-	if err != nil {
-		return nil, fmt.Errorf("glm plan call failed: %w", err)
-	}
-
-	consultantUsed := false
-	currentDirective := directive
-	for i := 0; i < 2; i++ {
-		if plan == nil || plan.Confidence >= 0.6 {
-			break
+	if plan == nil {
+		if p.glm == nil {
+			return nil, fmt.Errorf("glm client is not configured")
 		}
 
-		consultant := firstAvailableConsultant(p.consultants)
-		if consultant == nil {
-			break
+		combinedContext := strings.TrimSpace(agentsMD)
+		if strings.TrimSpace(cache) != "" {
+			combinedContext = combinedContext + "\n\nSession cache:\n" + cache
 		}
 
-		consultantUsed = true
-		planJSON, marshalErr := json.Marshal(plan)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("marshal plan for consultation: %w", marshalErr)
-		}
-
-		opinion, consultErr := consultant.Consult(
-			ctx,
-			"plan_validation",
-			combinedContext,
-			"Valida este plan: "+string(planJSON),
-		)
-		if consultErr != nil {
-			p.logger.Warn("consultant validation failed", slog.Any("error", consultErr), slog.String("consultant", consultant.GetName()))
-			break
-		}
-		if opinion == nil || opinion.AgreeWithOriginal {
-			break
-		}
-
-		feedback := buildPlanFeedback(opinion)
-		currentDirective = strings.TrimSpace(currentDirective + "\n\nConsultant feedback:\n" + feedback)
-
-		refinedPlan, refinedErr := p.glm.Plan(ctx, currentDirective, combinedContext)
-		if refinedErr != nil {
-			return nil, fmt.Errorf("glm plan refinement failed: %w", refinedErr)
-		}
-		plan = refinedPlan
-	}
-
-	resolvedProjectID := int64(0)
-	if p.db != nil {
-		resolvedProjectID, err = p.db.ResolveProjectID(ctx, projectID)
+		plan, err = p.glm.Plan(ctx, directive, combinedContext)
 		if err != nil {
-			return nil, fmt.Errorf("resolve project id %q: %w", projectID, err)
+			return nil, fmt.Errorf("glm plan call failed: %w", err)
 		}
+		engineName = "glm"
 	}
 
-	planID := generatePlanID()
-	storedTasks, err := p.persistTasks(ctx, resolvedProjectID, plan)
-	if err != nil {
-		return nil, err
-	}
+	return p.finalizePlan(ctx, directive, projectID, agentsMD, cache, plan, engineName)
+}
 
-	stored := storedPlan{
-		PlanID:     planID,
-		ProjectID:  resolvedProjectID,
-		ProjectRef: projectID,
-		AgentsMD:   agentsMD,
-		Cache:      cache,
-		Tasks:      storedTasks,
+func (p *Planner) RebuildPlan(ctx context.Context, planID, feedback string) (*PlanResult, error) {
+	if p == nil {
+		return nil, fmt.Errorf("planner is nil")
 	}
 
 	p.mu.Lock()
-	p.planByID[planID] = stored
+	eng := p.engine
+	rc := p.recon
+	stored, ok := p.planByID[planID]
 	p.mu.Unlock()
 
-	needsInput := len(plan.Questions) > 0
-	status := plannerReadyStatus
-	if needsInput {
-		status = plannerNeedsInputStatus
+	if !ok {
+		return nil, fmt.Errorf("plan %s not found", planID)
+	}
+	if eng == nil {
+		return nil, fmt.Errorf("no engine configured for rebuild")
 	}
 
-	return &PlanResult{
-		Plan:           plan,
-		PlanID:         planID,
-		Status:         status,
-		NeedsInput:     needsInput,
-		ConsultantUsed: consultantUsed,
-	}, nil
+	var reconData string
+	if rc != nil {
+		repoPath := resolveRepoPath(stored.ProjectRef)
+		if repoPath != "" {
+			reconResult, _ := rc.RunDefault(ctx, repoPath)
+			if reconResult != nil {
+				reconData = reconResult.Output
+			}
+		}
+	}
+
+	rebuildReq := engine.RebuildRequest{
+		PreviousPlan: convertStoredPlanToEnginePlan(stored),
+		Feedback:     strings.TrimSpace(feedback),
+		Directive:    stored.Directive,
+		ProjectName:  stored.ProjectRef,
+		AgentsMD:     stored.AgentsMD,
+		ReconData:    reconData,
+	}
+
+	newPlan, err := eng.Rebuild(ctx, rebuildReq)
+	if err != nil {
+		return nil, fmt.Errorf("rebuild: %w", err)
+	}
+
+	return p.finalizePlan(
+		ctx,
+		stored.Directive,
+		stored.ProjectRef,
+		stored.AgentsMD,
+		stored.Cache,
+		convertEnginePlanToLLMPlan(newPlan),
+		resolvePlanEngineName(ctx, eng),
+	)
 }
 
 func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
@@ -581,6 +623,213 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 	return nil
 }
 
+func (p *Planner) createPlanViaEngine(
+	ctx context.Context,
+	eng plannerEngine,
+	rc plannerRecon,
+	directive, projectID, agentsMD, cache string,
+) (*engine.PlanResult, error) {
+	var reconData string
+	if rc != nil {
+		repoPath := resolveRepoPath(projectID)
+		if repoPath != "" {
+			reconResult, err := rc.RunDefault(ctx, repoPath)
+			if err != nil {
+				p.logger.Warn("recon failed, proceeding without", slog.Any("error", err))
+			} else {
+				reconData = reconResult.Output
+			}
+		}
+	}
+
+	var thinkingHistory []engine.ThinkTurn
+	thinkReq := engine.ThinkRequest{
+		Directive:   directive,
+		ProjectName: projectID,
+		AgentsMD:    agentsMD,
+		ReconData:   reconData,
+		Cache:       cache,
+	}
+
+	var thinkingSummary string
+	for i := 0; i < 5; i++ {
+		thinkResult, err := eng.Think(ctx, thinkReq)
+		if err != nil {
+			return nil, fmt.Errorf("think turn %d: %w", i+1, err)
+		}
+		if thinkResult == nil {
+			return nil, fmt.Errorf("think turn %d returned nil result", i+1)
+		}
+
+		switch strings.ToLower(strings.TrimSpace(thinkResult.Type)) {
+		case "ready":
+			thinkingSummary = strings.TrimSpace(thinkResult.Summary)
+			goto propose
+		case "question":
+			question := strings.TrimSpace(thinkResult.Question)
+			thinkingHistory = append(thinkingHistory, engine.ThinkTurn{
+				Role:    "engine",
+				Content: question,
+			})
+			return nil, fmt.Errorf("engine needs input: %s", question)
+		case "info_request":
+			commands := append([]string(nil), thinkResult.Commands...)
+			thinkingHistory = append(thinkingHistory, engine.ThinkTurn{
+				Role:    "engine",
+				Content: "Requested: " + strings.Join(commands, ", "),
+			})
+			if rc == nil {
+				return nil, fmt.Errorf("engine requested recon commands but recon is not configured")
+			}
+			infoResult, runErr := rc.Run(ctx, commands)
+			if runErr != nil {
+				return nil, fmt.Errorf("recon run: %w", runErr)
+			}
+			response := ""
+			if infoResult != nil {
+				response = infoResult.Output
+			}
+			thinkingHistory = append(thinkingHistory, engine.ThinkTurn{
+				Role:    "recon",
+				Content: response,
+			})
+			thinkReq = engine.ThinkRequest{
+				PreviousThinking: append([]engine.ThinkTurn(nil), thinkingHistory...),
+				Response:         response,
+			}
+		default:
+			return nil, fmt.Errorf("unknown think result type: %s", thinkResult.Type)
+		}
+	}
+
+	thinkingSummary = "Max thinking iterations reached. Proceeding with available context."
+
+propose:
+	planResult, err := eng.Propose(ctx, engine.ProposeRequest{
+		Directive:       directive,
+		ProjectName:     projectID,
+		AgentsMD:        agentsMD,
+		ReconData:       reconData,
+		ThinkingSummary: thinkingSummary,
+		ThinkingHistory: thinkingHistory,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("propose: %w", err)
+	}
+
+	return planResult, nil
+}
+
+func (p *Planner) finalizePlan(
+	ctx context.Context,
+	directive, projectID, agentsMD, cache string,
+	plan *llm.TaskPlan,
+	engineName string,
+) (*PlanResult, error) {
+	if plan == nil {
+		return nil, fmt.Errorf("plan is nil")
+	}
+
+	combinedContext := strings.TrimSpace(agentsMD)
+	if strings.TrimSpace(cache) != "" {
+		combinedContext = combinedContext + "\n\nSession cache:\n" + cache
+	}
+
+	consultantUsed := false
+	currentDirective := directive
+	engineName = normalizePlanEngineName(engineName)
+	for i := 0; i < 2; i++ {
+		if plan.Confidence >= 0.6 {
+			break
+		}
+
+		consultant := firstAvailableConsultant(p.consultants)
+		if consultant == nil {
+			break
+		}
+
+		consultantUsed = true
+		planJSON, marshalErr := json.Marshal(plan)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("marshal plan for consultation: %w", marshalErr)
+		}
+
+		opinion, consultErr := consultant.Consult(
+			ctx,
+			"plan_validation",
+			combinedContext,
+			"Valida este plan: "+string(planJSON),
+		)
+		if consultErr != nil {
+			p.logger.Warn("consultant validation failed", slog.Any("error", consultErr), slog.String("consultant", consultant.GetName()))
+			break
+		}
+		if opinion == nil || opinion.AgreeWithOriginal {
+			break
+		}
+		if p.glm == nil {
+			p.logger.Warn("consultant requested plan refinement but glm is not configured")
+			break
+		}
+
+		feedback := buildPlanFeedback(opinion)
+		currentDirective = strings.TrimSpace(currentDirective + "\n\nConsultant feedback:\n" + feedback)
+
+		refinedPlan, refinedErr := p.glm.Plan(ctx, currentDirective, combinedContext)
+		if refinedErr != nil {
+			return nil, fmt.Errorf("glm plan refinement failed: %w", refinedErr)
+		}
+		plan = refinedPlan
+		engineName = "glm"
+	}
+
+	resolvedProjectID := int64(0)
+	var err error
+	if p.db != nil {
+		resolvedProjectID, err = p.db.ResolveProjectID(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve project id %q: %w", projectID, err)
+		}
+	}
+
+	planID := generatePlanID()
+	storedTasks, err := p.persistTasks(ctx, resolvedProjectID, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	stored := storedPlan{
+		PlanID:     planID,
+		ProjectID:  resolvedProjectID,
+		ProjectRef: projectID,
+		Directive:  directive,
+		AgentsMD:   agentsMD,
+		Cache:      cache,
+		Plan:       cloneTaskPlan(plan),
+		Engine:     engineName,
+		Tasks:      storedTasks,
+	}
+
+	p.mu.Lock()
+	p.planByID[planID] = stored
+	p.mu.Unlock()
+
+	needsInput := len(plan.Questions) > 0
+	status := plannerReadyStatus
+	if needsInput {
+		status = plannerNeedsInputStatus
+	}
+
+	return &PlanResult{
+		Plan:           cloneTaskPlan(plan),
+		PlanID:         planID,
+		Status:         status,
+		NeedsInput:     needsInput,
+		ConsultantUsed: consultantUsed,
+		Engine:         engineName,
+	}, nil
+}
+
 func (p *Planner) persistTasks(ctx context.Context, projectID int64, plan *llm.TaskPlan) ([]plannedTask, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("plan is nil")
@@ -823,6 +1072,200 @@ func loadRelevantCache(projectID string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(chunks, "\n\n"))
+}
+
+func convertEnginePlanToLLMPlan(result *engine.PlanResult) *llm.TaskPlan {
+	if result == nil {
+		return nil
+	}
+
+	tasks := make([]llm.Task, 0, len(result.Tasks))
+	for _, task := range result.Tasks {
+		description := strings.TrimSpace(task.Description)
+		if description == "" {
+			description = strings.TrimSpace(task.Prompt)
+		}
+
+		tasks = append(tasks, llm.Task{
+			ID:          strings.TrimSpace(task.ID),
+			Title:       strings.TrimSpace(task.Title),
+			Description: description,
+			DependsOn:   append([]string(nil), task.Dependencies...),
+			Complexity:  complexityFromPriority(task.Priority),
+			BranchName:  strings.TrimSpace(task.BranchName),
+		})
+	}
+
+	return &llm.TaskPlan{
+		Confidence: result.Confidence,
+		Tasks:      tasks,
+		Notes:      strings.TrimSpace(result.Summary),
+	}
+}
+
+func convertStoredPlanToEnginePlan(plan storedPlan) *engine.PlanResult {
+	result := &engine.PlanResult{}
+	source := plan.Plan
+	if source != nil {
+		result.Confidence = source.Confidence
+		result.Summary = strings.TrimSpace(source.Notes)
+		for _, task := range source.Tasks {
+			result.Tasks = append(result.Tasks, engine.PlanTask{
+				ID:           strings.TrimSpace(task.ID),
+				Title:        strings.TrimSpace(task.Title),
+				Description:  strings.TrimSpace(task.Description),
+				BranchName:   strings.TrimSpace(task.BranchName),
+				Dependencies: append([]string(nil), task.DependsOn...),
+			})
+		}
+		return result
+	}
+
+	for _, task := range plan.Tasks {
+		result.Tasks = append(result.Tasks, engine.PlanTask{
+			ID:           strings.TrimSpace(task.Task.ID),
+			Title:        strings.TrimSpace(task.Task.Title),
+			Description:  strings.TrimSpace(task.Task.Description),
+			BranchName:   strings.TrimSpace(task.Task.BranchName),
+			Dependencies: append([]string(nil), task.Task.DependsOn...),
+		})
+	}
+	return result
+}
+
+func cloneTaskPlan(plan *llm.TaskPlan) *llm.TaskPlan {
+	if plan == nil {
+		return nil
+	}
+
+	cloned := &llm.TaskPlan{
+		Confidence: plan.Confidence,
+		Questions:  append([]string(nil), plan.Questions...),
+		Notes:      plan.Notes,
+		Tasks:      make([]llm.Task, 0, len(plan.Tasks)),
+	}
+	for _, task := range plan.Tasks {
+		cloned.Tasks = append(cloned.Tasks, llm.Task{
+			ID:                 task.ID,
+			Title:              task.Title,
+			Description:        task.Description,
+			AcceptanceCriteria: append([]string(nil), task.AcceptanceCriteria...),
+			FilesAffected:      append([]string(nil), task.FilesAffected...),
+			DependsOn:          append([]string(nil), task.DependsOn...),
+			Complexity:         task.Complexity,
+			BranchName:         task.BranchName,
+		})
+	}
+	return cloned
+}
+
+func resolveRepoPath(projectID string) string {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return ""
+	}
+
+	candidates := make([]string, 0, 6)
+	if filepath.IsAbs(projectID) {
+		candidates = append(candidates, projectID)
+	}
+	candidates = append(candidates, projectID)
+
+	if cwd, err := os.Getwd(); err == nil {
+		base := filepath.Base(cwd)
+		if strings.EqualFold(base, projectID) {
+			candidates = append(candidates, cwd)
+		}
+	}
+
+	if reposDir := configuredReposDir(); reposDir != "" {
+		candidates = append(candidates,
+			filepath.Join(reposDir, projectID),
+			filepath.Join(reposDir, strings.ToLower(projectID)),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		info, err := os.Stat(candidate)
+		if err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
+func configuredReposDir() string {
+	for _, envName := range []string{"HIVEMIND_REPOS_DIR", "CODEX_REPOS_DIR", "REPOS_DIR"} {
+		if value := strings.TrimSpace(os.Getenv(envName)); value != "" {
+			return value
+		}
+	}
+
+	configPath := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
+	if configPath == "" {
+		configPath = "config.yaml"
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var cfg struct {
+		Codex struct {
+			ReposDir string `yaml:"repos_dir"`
+		} `yaml:"codex"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(cfg.Codex.ReposDir)
+}
+
+func complexityFromPriority(priority int) string {
+	switch {
+	case priority >= 4:
+		return "high"
+	case priority <= 1:
+		return "low"
+	default:
+		return "medium"
+	}
+}
+
+func isEngineNeedsInputError(err error) bool {
+	return err != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(err.Error())), "engine needs input:")
+}
+
+func resolvePlanEngineName(ctx context.Context, eng plannerEngine) string {
+	if eng == nil {
+		return "glm"
+	}
+
+	type lastUsedEngineReporter interface {
+		LastUsedEngine() string
+	}
+
+	if reporter, ok := eng.(lastUsedEngineReporter); ok {
+		if name := strings.TrimSpace(reporter.LastUsedEngine()); name != "" {
+			return normalizePlanEngineName(name)
+		}
+	}
+
+	return normalizePlanEngineName(eng.ActiveEngine(ctx))
+}
+
+func normalizePlanEngineName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, "none") {
+		return "glm"
+	}
+	return name
 }
 
 func generatePlanID() string {
