@@ -43,26 +43,26 @@ export default function Timeline({ events }) {
   const hasMore = sortedEvents.length > visibleCount;
 
   return (
-    <section className="bg-hivemind-surface px-3 py-2">
+    <section className="bg-hivemind-surface px-[18px] py-[14px]">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">ACTIVITY LOG</span>
-        <span className="text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">{sortedEvents.length} events</span>
+        <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">ACTIVITY LOG</span>
+        <span className="text-[10px] uppercase tracking-[0.1em] text-hivemind-dim">{sortedEvents.length} events</span>
       </div>
 
       {visibleEvents.length === 0 ? (
-        <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+        <p className="mt-3 border border-dashed border-hivemind-border px-4 py-5 text-[11px] text-hivemind-dim">
           No recent events
         </p>
       ) : (
-        <div className="mt-2 space-y-1">
+        <div className="mt-3 space-y-2">
           {visibleEvents.map((event) => {
             const style = eventStyles[event.event_type] ?? eventStyles.default;
 
             return (
               <article key={event.id} className="flex items-start gap-2">
-                <span className={`mt-[4px] h-1 w-1 shrink-0 ${style.color}`} />
-                <span className="shrink-0 text-[8px] text-hivemind-dim">{formatTimestamp(event.timestamp)}</span>
-                <p className="min-w-0 text-[9px] text-hivemind-muted">{event.description}</p>
+                <span className={`mt-[5px] h-[5px] w-[5px] shrink-0 ${style.color}`} />
+                <span className="shrink-0 text-[10px] text-hivemind-dim">{formatTimestamp(event.timestamp)}</span>
+                <p className="min-w-0 text-[11px] text-hivemind-muted">{event.description}</p>
               </article>
             );
           })}
@@ -70,11 +70,11 @@ export default function Timeline({ events }) {
       )}
 
       {hasMore ? (
-        <div className="mt-2">
+        <div className="mt-3">
           <button
             type="button"
             onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}
-            className="cursor-pointer border border-hivemind-border px-2 py-[3px] text-[8px] text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
+            className="cursor-pointer border border-hivemind-border px-2.5 py-1 text-[10px] text-hivemind-muted transition-colors duration-150 hover:text-hivemind-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
           >
             show more
           </button>

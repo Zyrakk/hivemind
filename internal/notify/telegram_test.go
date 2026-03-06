@@ -51,6 +51,23 @@ func TestNoopNotifier(t *testing.T) {
 	}
 }
 
+func TestNotifyEngineSwitchQueuesFormattedMessage(t *testing.T) {
+	t.Parallel()
+
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.NotifyEngineSwitch("claude-code", "glm", "Think failed: rate limit")
+
+	select {
+	case msg := <-bot.outbox:
+		want := `▸ Engine switch: claude\-code → glm\. Reason: Think failed: rate limit`
+		if msg != want {
+			t.Fatalf("message = %q, want %q", msg, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for engine switch message")
+	}
+}
+
 func TestCommandsWithMockStore(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC)

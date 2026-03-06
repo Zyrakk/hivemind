@@ -1,0 +1,8 @@
+=== RUN   TestEvaluateWorkerOutputAccept
+--- PASS: TestEvaluateWorkerOutputAccept (0.53s)
+=== RUN   TestEvaluateWorkerOutputIterateRelaunchesWorker
+--- PASS: TestEvaluateWorkerOutputIterateRelaunchesWorker (0.48s)
+=== RUN   TestEvaluateWorkerOutputEscalateMarksNeedsInputAndCreatesEvent
+--- PASS: TestEvaluateWorkerOutputEscalateMarksNeedsInputAndCreatesEvent (0.57s)
+PASS
+ok  	github.com/zyrakk/hivemind/internal/evaluator	1.581s

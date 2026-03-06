@@ -1,0 +1,26 @@
+=== RUN   TestParseDirectiveRouting
+=== PAUSE TestParseDirectiveRouting
+=== CONT  TestParseDirectiveRouting
+=== RUN   TestParseDirectiveRouting/spanish_prefix_with_directive_label
+=== PAUSE TestParseDirectiveRouting/spanish_prefix_with_directive_label
+=== RUN   TestParseDirectiveRouting/english_prefix_with_directive_label
+=== PAUSE TestParseDirectiveRouting/english_prefix_with_directive_label
+=== RUN   TestParseDirectiveRouting/prefix_without_directive_label
+=== PAUSE TestParseDirectiveRouting/prefix_without_directive_label
+=== RUN   TestParseDirectiveRouting/no_routing_prefix
+=== PAUSE TestParseDirectiveRouting/no_routing_prefix
+=== RUN   TestParseDirectiveRouting/routing_with_inline_directive_label_without_dot
+=== PAUSE TestParseDirectiveRouting/routing_with_inline_directive_label_without_dot
+=== CONT  TestParseDirectiveRouting/spanish_prefix_with_directive_label
+=== CONT  TestParseDirectiveRouting/routing_with_inline_directive_label_without_dot
+=== CONT  TestParseDirectiveRouting/no_routing_prefix
+=== CONT  TestParseDirectiveRouting/prefix_without_directive_label
+=== CONT  TestParseDirectiveRouting/english_prefix_with_directive_label
+--- PASS: TestParseDirectiveRouting (0.00s)
+    --- PASS: TestParseDirectiveRouting/spanish_prefix_with_directive_label (0.00s)
+    --- PASS: TestParseDirectiveRouting/routing_with_inline_directive_label_without_dot (0.00s)
+    --- PASS: TestParseDirectiveRouting/no_routing_prefix (0.00s)
+    --- PASS: TestParseDirectiveRouting/prefix_without_directive_label (0.00s)
+    --- PASS: TestParseDirectiveRouting/english_prefix_with_directive_label (0.00s)
+PASS
+ok  	github.com/zyrakk/hivemind/cmd/orchestrator	0.019s

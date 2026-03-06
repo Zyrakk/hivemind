@@ -28,7 +28,7 @@ export default function ArchitectureDecisions({ decisions }) {
   const [openID, setOpenID] = useState(() => normalized[0]?.id ?? null);
 
   if (normalized.length === 0) {
-    return <p className="border border-dashed border-hivemind-border px-3 py-3 text-[9px] text-hivemind-dim">No architecture decisions recorded</p>;
+    return <p className="border border-dashed border-hivemind-border px-4 py-4 text-[11px] text-hivemind-dim">No architecture decisions recorded</p>;
   }
 
   return (
@@ -38,27 +38,27 @@ export default function ArchitectureDecisions({ decisions }) {
         const isOpen = openID === decision.id;
 
         return (
-          <article key={decision.id} className="border-b border-hivemind-border py-1.5">
+          <article key={decision.id} className="border-b border-hivemind-border py-2">
             <button
               type="button"
               onClick={() => setOpenID((current) => (current === decision.id ? null : decision.id))}
-              className="w-full cursor-pointer border-l-2 px-2 py-1 text-left transition-colors duration-150 hover:bg-hivemind-border/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
+              className="w-full cursor-pointer border-l-2 px-3 py-1.5 text-left transition-colors duration-150 hover:bg-hivemind-border/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0"
               style={{ borderLeftColor: style.code === 'DB' ? '#5fba7d' : style.code === 'API' ? '#6b8fc7' : style.code === 'STR' ? '#d4a843' : '#c75a5a' }}
             >
               <span className="flex items-center gap-2">
-                <span className={`px-[5px] py-[1px] text-[8px] font-semibold uppercase tracking-[0.08em] ${style.badge}`}>
+                <span className={`px-1.5 py-[2px] text-[10px] font-semibold uppercase tracking-[0.08em] ${style.badge}`}>
                   {style.code}
                 </span>
-                <span className="min-w-0 truncate text-[10px] font-medium text-hivemind-text">{decision.title}</span>
+                <span className="min-w-0 truncate text-[12px] font-medium text-hivemind-text">{decision.title}</span>
               </span>
             </button>
 
             <div
-              className={`overflow-hidden pl-[10px] transition-[max-height] duration-150 ${
+              className={`overflow-hidden pl-3 transition-[max-height] duration-150 ${
                 isOpen ? 'max-h-[140px]' : 'max-h-0'
               }`}
             >
-              <p className="mt-1 text-[9px] leading-relaxed text-hivemind-muted">{decision.description}</p>
+              <p className="mt-2 text-[11px] leading-relaxed text-hivemind-muted">{decision.description}</p>
             </div>
           </article>
         );

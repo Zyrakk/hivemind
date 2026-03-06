@@ -22,17 +22,17 @@ export default function AlertBanner({
   const style = variantStyles[variant] ?? variantStyles.warning;
 
   return (
-    <div className={`border px-3 py-2 ${style.container}`}>
+    <div className={`border px-[18px] py-[10px] ${style.container}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.15em]">{style.marker}</span>
-          <p className="truncate text-[10px] leading-tight text-hivemind-muted">{message}</p>
+          <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.15em]">{style.marker}</span>
+          <p className="truncate text-[12px] leading-tight text-hivemind-muted">{message}</p>
         </div>
         {actionLabel && onAction ? (
           <button
             type="button"
             onClick={onAction}
-            className="border border-current px-2 py-1 text-[9px] uppercase tracking-[0.1em] transition-colors duration-150 hover:bg-hivemind-bg/40"
+            className="border border-current px-2.5 py-1.5 text-[11px] uppercase tracking-[0.1em] transition-colors duration-150 hover:bg-hivemind-bg/40"
           >
             {actionLabel}
           </button>

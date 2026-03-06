@@ -41,7 +41,7 @@ export default function ProjectCard({ project }) {
 
   return (
     <tr
-      className="cursor-pointer border-b border-hivemind-border/80 text-[10px] transition-colors duration-150 last:border-b-0 hover:bg-[#252525]"
+      className="cursor-pointer border-b border-hivemind-border/80 text-[12px] transition-colors duration-150 last:border-b-0 hover:bg-[#252525]"
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -53,15 +53,15 @@ export default function ProjectCard({ project }) {
       role="button"
       aria-label={`Open project ${project.name}`}
     >
-      <td className="px-2 py-1.5 font-semibold text-hivemind-text">{project.name}</td>
-      <td className={`px-2 py-1.5 text-[9px] font-semibold uppercase tracking-[0.1em] ${status.textClass}`}>
+      <td className="px-1.5 py-2 text-[13px] font-semibold text-hivemind-text">{project.name}</td>
+      <td className={`px-1.5 py-2 text-[11px] font-semibold uppercase tracking-[0.1em] ${status.textClass}`}>
         {status.label}
       </td>
-      <td className={`px-2 py-1.5 ${workers > 0 ? 'text-hivemind-green' : 'text-hivemind-dim'}`}>
+      <td className={`px-1.5 py-2 ${workers > 0 ? 'text-hivemind-green' : 'text-hivemind-dim'}`}>
         {workers}
       </td>
-      <td className={`px-2 py-1.5 ${tasks > 0 ? 'text-hivemind-yellow' : 'text-hivemind-dim'}`}>{tasks}</td>
-      <td className="px-2 py-1.5 text-hivemind-dim">{formatRelativeTime(project.last_activity)}</td>
+      <td className={`px-1.5 py-2 ${tasks > 0 ? 'text-hivemind-yellow' : 'text-hivemind-dim'}`}>{tasks}</td>
+      <td className="px-1.5 py-2 text-hivemind-dim">{formatRelativeTime(project.last_activity)}</td>
     </tr>
   );
 }

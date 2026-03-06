@@ -94,7 +94,7 @@ export default function FlashTicker({ event, eventCount = 0 }) {
   }, [reduceMotion, eventIdentity(event)]);
 
   return (
-    <div className="relative flex h-[26px] items-center overflow-hidden border-b border-hivemind-border bg-[#0d0d0d] px-4 text-[9px]">
+    <div className="relative flex h-[32px] items-center overflow-hidden border-b border-hivemind-border bg-[#0d0d0d] px-5 text-[11px]">
       {event ? (
         <>
           <span

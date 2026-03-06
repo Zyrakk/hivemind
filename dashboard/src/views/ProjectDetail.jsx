@@ -163,7 +163,7 @@ export function ProjectCarbonHeader({
   return (
     <header className="sticky top-0 z-30">
       <div className="border-b border-hivemind-border bg-[#0d0d0d]">
-        <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between px-4 py-1.5 text-[9px] sm:px-5">
+        <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between px-5 py-2 text-[11px]">
           <div className="flex min-w-0 items-center gap-2 uppercase tracking-[0.12em]">
             <button
               type="button"
@@ -173,7 +173,7 @@ export function ProjectCarbonHeader({
               &lt; BACK
             </button>
             <span className="text-hivemind-dim">|</span>
-            <span className="text-[11px] font-bold text-hivemind-text">HIVEMIND</span>
+            <span className="text-[13px] font-bold text-hivemind-text">HIVEMIND</span>
             <span className="text-hivemind-dim">|</span>
             <span className="text-hivemind-dim">k3s</span>
             <span className="text-hivemind-dim">|</span>
@@ -189,11 +189,11 @@ export function ProjectCarbonHeader({
       <FlashTicker event={latestEvent} eventCount={eventCount} />
 
       <div className="border-b border-hivemind-border bg-hivemind-surface">
-        <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between gap-2 px-4 py-2 sm:px-5">
+        <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-2 px-5 py-[14px]">
           <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-[14px] font-bold text-hivemind-text">{projectName}</h1>
+            <h1 className="truncate text-[16px] font-bold text-hivemind-text">{projectName}</h1>
             <span
-              className="shrink-0 px-2 py-[2px] text-[9px] font-semibold uppercase"
+              className="shrink-0 px-2.5 py-1 text-[11px] font-semibold uppercase"
               style={{
                 border: `1px solid ${withAlpha(projectStatus.hex, 0.3)}`,
                 backgroundColor: withAlpha(projectStatus.hex, 0.08),
@@ -204,12 +204,12 @@ export function ProjectCarbonHeader({
             </span>
           </div>
 
-          <nav className="flex items-center gap-px">
+          <nav className="flex items-center gap-[2px]">
             <NavLink
               to={`/project/${id}`}
               end
               className={({ isActive }) =>
-                `cursor-pointer px-3 py-1 text-[9px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
+                `cursor-pointer px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
                   isActive
                     ? 'border border-transparent text-hivemind-text'
                     : 'border border-hivemind-border text-hivemind-muted hover:text-hivemind-text'
@@ -228,7 +228,7 @@ export function ProjectCarbonHeader({
             <NavLink
               to={`/project/${id}/context`}
               className={({ isActive }) =>
-                `cursor-pointer px-3 py-1 text-[9px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
+                `cursor-pointer px-3 py-1.5 text-[11px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
                   isActive
                     ? 'border border-transparent text-hivemind-text'
                     : 'border border-hivemind-border text-hivemind-muted hover:text-hivemind-text'
@@ -333,7 +333,7 @@ export default function ProjectDetail({ apiBaseURL }) {
   const latestEvent = detail.recent_events[0] ?? null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-hivemind-bg text-hivemind-text">
+    <div className="flex min-h-screen flex-col bg-hivemind-bg text-[12px] text-hivemind-text">
       <ProjectCarbonHeader
         id={id}
         projectName={detail.project.name}
@@ -345,30 +345,30 @@ export default function ProjectDetail({ apiBaseURL }) {
         onBack={() => navigate('/')}
       />
 
-      <main className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-px px-4 py-3 sm:px-5">
+      <main className="mx-auto flex w-full max-w-[1280px] flex-1 min-h-0 flex-col gap-[2px] px-5 py-4">
         {connectionError ? <AlertBanner variant="error" message="No connection to the orchestrator" /> : null}
 
         {loading ? (
-          <section className="bg-hivemind-surface px-3 py-3">
-            <p className="border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+          <section className="bg-hivemind-surface px-[18px] py-[14px]">
+            <p className="border border-dashed border-hivemind-border px-4 py-5 text-[11px] text-hivemind-dim">
               Loading project telemetry...
             </p>
           </section>
         ) : null}
 
-        <section className="grid gap-px md:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-w-0 flex-col gap-px">
+        <section className="grid flex-1 min-h-0 gap-[2px] md:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="flex min-h-0 min-w-0 flex-col gap-[2px]">
             <MilestoneRoadmap milestones={milestones} />
 
-            <section className="bg-hivemind-surface px-3 py-2.5">
+            <section className="bg-hivemind-surface px-[18px] py-[14px]">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">PROGRESS</span>
-                <span className="text-[10px] text-hivemind-muted">
+                <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">PROGRESS</span>
+                <span className="text-[12px] text-hivemind-muted">
                   Overall: <span className="tabular-nums">{Math.round((detail.progress.overall ?? 0) * 100)}%</span>
                 </span>
               </div>
 
-              <div className="mt-2 space-y-2">
+              <div className="mt-3 space-y-3">
                 {progressBars.map((stream) => (
                   <ProgressBar key={stream.name} label={stream.name} progress={stream.progress} />
                 ))}
@@ -378,32 +378,35 @@ export default function ProjectDetail({ apiBaseURL }) {
             <TaskList tasks={detail.tasks} workers={detail.workers} />
           </div>
 
-          <aside className="flex min-w-0 flex-col gap-px">
-            <section className="bg-hivemind-surface px-3 py-2">
+          <aside className="flex min-h-0 min-w-0 flex-col gap-[2px]">
+            <section className="bg-hivemind-surface px-[18px] py-[14px]">
               <div className="flex items-center gap-1">
-                <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">WORKERS</span>
-                <span className="text-[8px] uppercase tracking-[0.1em] text-hivemind-dim">[{detail.workers.length}]</span>
+                <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">WORKERS</span>
+                <span className="text-[10px] uppercase tracking-[0.1em] text-hivemind-dim">[{detail.workers.length}]</span>
               </div>
 
               {detail.workers.length === 0 ? (
-                <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+                <p className="mt-3 border border-dashed border-hivemind-border px-4 py-5 text-[11px] text-hivemind-dim">
                   No active workers
                 </p>
               ) : (
-                <div className="mt-1">
+                <div className="mt-2">
                   {detail.workers.map((worker) => (
-                    <article key={worker.id} className="border-b border-hivemind-border py-2 last:border-b-0">
+                    <article
+                      key={worker.id}
+                      className="mb-[14px] border-b border-hivemind-border pb-3 last:mb-0 last:border-b-0 last:pb-0"
+                    >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="min-w-0 truncate text-[10px] font-semibold text-hivemind-text">
+                        <p className="min-w-0 truncate text-[12px] font-semibold text-hivemind-text">
                           {worker.project_name ?? worker.session_id ?? worker.project_id ?? `worker-${worker.id}`}
                         </p>
-                        <p className="shrink-0 text-[9px] text-hivemind-dim tabular-nums">
+                        <p className="shrink-0 text-[11px] text-hivemind-dim tabular-nums">
                           {formatRelativeTime(worker.started_at)}
                         </p>
                       </div>
 
                       <p
-                        className="mt-1 text-[9px] text-hivemind-muted"
+                        className="mt-2 text-[12px] text-hivemind-muted"
                         style={{
                           overflow: 'hidden',
                           display: '-webkit-box',
@@ -415,11 +418,11 @@ export default function ProjectDetail({ apiBaseURL }) {
                         {worker.task_description ?? 'No task description'}
                       </p>
 
-                      <div className="mt-1 flex items-center justify-between gap-2">
-                        <p className="min-w-0 truncate text-[8px] text-hivemind-dim" title={worker.branch}>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <p className="min-w-0 truncate text-[11px] text-hivemind-dim" title={worker.branch}>
                           {worker.branch ?? '--'}
                         </p>
-                        <span className={`h-1 w-1 shrink-0 ${workerStatusSquare(worker.status)}`} />
+                        <span className={`h-[5px] w-[5px] shrink-0 ${workerStatusSquare(worker.status)}`} />
                       </div>
                     </article>
                   ))}

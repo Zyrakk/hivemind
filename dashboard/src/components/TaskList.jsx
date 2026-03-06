@@ -75,17 +75,17 @@ export default function TaskList({ tasks, workers }) {
   };
 
   return (
-    <section className="bg-hivemind-surface px-3 py-2.5">
+    <section className="bg-hivemind-surface px-[18px] py-[14px]">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">TASKS</span>
+        <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">TASKS</span>
 
-        <div className="flex flex-wrap items-center gap-px">
+        <div className="flex flex-wrap items-center gap-[2px]">
           {filters.map((filter) => (
             <button
               key={filter.key}
               type="button"
               onClick={() => setActiveFilter(filter.key)}
-              className={`cursor-pointer px-2 py-[3px] text-[8px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
+              className={`cursor-pointer px-2.5 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hivemind-blue focus-visible:outline-offset-0 ${
                 activeFilter === filter.key
                   ? 'bg-hivemind-dim/20 text-hivemind-text'
                   : 'border border-hivemind-border text-hivemind-dim hover:text-hivemind-muted'
@@ -98,11 +98,11 @@ export default function TaskList({ tasks, workers }) {
       </div>
 
       {filteredTasks.length === 0 ? (
-        <p className="mt-2 border border-dashed border-hivemind-border px-3 py-4 text-[9px] text-hivemind-dim">
+        <p className="mt-3 border border-dashed border-hivemind-border px-4 py-5 text-[11px] text-hivemind-dim">
           No tasks
         </p>
       ) : (
-        <div className="mt-2">
+        <div className="mt-3">
           {filteredTasks.map((task) => {
             const dependsOn = normalizeDependsOn(task.depends_on);
             const assignedWorker = task.assigned_worker_id
@@ -117,7 +117,7 @@ export default function TaskList({ tasks, workers }) {
                 : '';
 
             return (
-              <article key={task.id} className="border-b border-hivemind-border py-1.5 last:border-b-0">
+              <article key={task.id} className="border-b border-hivemind-border py-2 last:border-b-0">
                 <button
                   type="button"
                   onClick={() => toggleExpanded(task.id)}
@@ -125,13 +125,13 @@ export default function TaskList({ tasks, workers }) {
                 >
                   <div className={`border-l-2 ${style.border} pl-2`}>
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-[10px] font-medium text-hivemind-text">{task.title}</p>
+                      <p className="truncate text-[12px] font-medium text-hivemind-text">{task.title}</p>
                       <div className="flex shrink-0 items-center gap-2">
-                        <span className={`text-[8px] font-semibold uppercase tracking-[0.08em] ${style.text}`}>
+                        <span className={`text-[10px] font-semibold uppercase tracking-[0.08em] ${style.text}`}>
                           {style.code}
                         </span>
                         {workerLabel ? (
-                          <span className="text-[8px] text-hivemind-dim">{workerLabel}</span>
+                          <span className="text-[10px] text-hivemind-dim">{workerLabel}</span>
                         ) : null}
                       </div>
                     </div>
@@ -139,17 +139,17 @@ export default function TaskList({ tasks, workers }) {
                 </button>
 
                 {task.status === 'blocked' || task.status === 'failed' ? (
-                  <p className="mt-1 pl-[10px] text-[8px] uppercase tracking-[0.08em] text-hivemind-red">
+                  <p className="mt-2 pl-3 text-[10px] uppercase tracking-[0.08em] text-hivemind-red">
                     BLOCKED BY: {dependsOn.length > 0 ? dependsOn.join(', ') : 'PENDING DEPENDENCY'}
                   </p>
                 ) : null}
 
                 <div
-                  className={`overflow-hidden pl-[10px] transition-[max-height] duration-200 ${
+                  className={`overflow-hidden pl-3 transition-[max-height] duration-200 ${
                     expanded ? 'max-h-[120px]' : 'max-h-0'
                   }`}
                 >
-                  <p className="mt-1 border-t border-hivemind-border/50 pt-1 text-[9px] leading-relaxed text-hivemind-muted">
+                  <p className="mt-2 border-t border-hivemind-border/50 pt-2 text-[11px] leading-relaxed text-hivemind-muted">
                     {task.description || 'No description'}
                   </p>
                 </div>

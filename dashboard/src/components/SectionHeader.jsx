@@ -13,9 +13,9 @@ export default function SectionHeader({ label, count, color = 'hivemind-dim' }) 
 
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">{label}</span>
+      <span className="text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">{label}</span>
       {typeof count === 'number' ? (
-        <span className={`shrink-0 text-[8px] uppercase tracking-[0.15em] ${countClass}`}>{count}</span>
+        <span className={`shrink-0 text-[10px] uppercase tracking-[0.15em] ${countClass}`}>{count}</span>
       ) : null}
     </div>
   );

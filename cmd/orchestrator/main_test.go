@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/zyrakk/hivemind/internal/directive"
@@ -69,5 +71,43 @@ func TestParseDirectiveRouting(t *testing.T) {
 				t.Fatalf("parsed mismatch: got %t want %t", gotParsed, tc.wantParsed)
 			}
 		})
+	}
+}
+
+func TestDefaultRuntimeConfigUsesGLMPrimary(t *testing.T) {
+	t.Parallel()
+
+	cfg := defaultRuntimeConfig()
+	if cfg.Engine.Primary != "glm" {
+		t.Fatalf("Engine.Primary = %q, want %q", cfg.Engine.Primary, "glm")
+	}
+}
+
+func TestLoadConfigAcceptsClaudeCodePrimary(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	payload := []byte(`
+engine:
+  primary: claude-code
+  fallback: glm
+  claude_code:
+    binary: claude
+    timeout_minutes: 10
+`)
+	if err := os.WriteFile(configPath, payload, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if cfg.Engine.Primary != "claude-code" {
+		t.Fatalf("Engine.Primary = %q, want %q", cfg.Engine.Primary, "claude-code")
+	}
+	if cfg.Engine.ClaudeCode.Usage.HardLimitDaily != 18 {
+		t.Fatalf("HardLimitDaily = %d, want 18", cfg.Engine.ClaudeCode.Usage.HardLimitDaily)
 	}
 }

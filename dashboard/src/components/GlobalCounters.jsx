@@ -26,20 +26,18 @@ function toCount(value) {
 
 export default function GlobalCounters({ counters }) {
   return (
-    <section className="grid grid-cols-3 gap-px bg-hivemind-border">
+    <section className="grid grid-cols-3 gap-[2px] bg-hivemind-border">
       {counterItems.map((item) => {
         const rawValue = counters?.[item.key] ?? 0;
         const count = Number.isFinite(rawValue) ? Math.max(0, Math.floor(rawValue)) : 0;
         const valueClass = item.dynamicClass && count === 0 ? 'text-hivemind-dim' : item.valueClass;
 
         return (
-          <article key={item.key} className="bg-hivemind-surface px-3 py-2">
-            <p className="flex items-end gap-1 leading-none">
-              <span className={`text-[22px] font-bold ${valueClass}`}>{toCount(count)}</span>
-              <span className="pb-[2px] text-[8px] uppercase tracking-[0.15em] text-hivemind-dim">
-                {item.label}
-              </span>
+          <article key={item.key} className="bg-hivemind-surface px-[18px] py-[14px]">
+            <p className="leading-none">
+              <span className={`text-[32px] font-bold ${valueClass}`}>{toCount(count)}</span>
             </p>
+            <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-hivemind-dim">{item.label}</p>
           </article>
         );
       })}

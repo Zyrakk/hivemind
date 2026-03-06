@@ -1,0 +1,32 @@
+=== RUN   TestClaudeConsultParsesResponseAndTracksBudget
+--- PASS: TestClaudeConsultParsesResponseAndTracksBudget (0.01s)
+=== RUN   TestClaudeIsUnavailableWhenMonthlyBudgetReached
+--- PASS: TestClaudeIsUnavailableWhenMonthlyBudgetReached (0.01s)
+=== RUN   TestBudgetTrackerLimitsPersistenceAndResets
+--- PASS: TestBudgetTrackerLimitsPersistenceAndResets (0.25s)
+=== RUN   TestGeminiConsultParsesResponseAndTracksDailyCalls
+--- PASS: TestGeminiConsultParsesResponseAndTracksDailyCalls (0.00s)
+=== RUN   TestConsultIfNeededFallbackToGeminiWhenClaudeUnavailable
+--- PASS: TestConsultIfNeededFallbackToGeminiWhenClaudeUnavailable (0.00s)
+=== RUN   TestGLMClientChatAndTokenAccumulation
+=== PAUSE TestGLMClientChatAndTokenAccumulation
+=== RUN   TestGLMClientChatRetryOn429
+=== PAUSE TestGLMClientChatRetryOn429
+=== RUN   TestGLMClientChatTimeout
+=== PAUSE TestGLMClientChatTimeout
+=== RUN   TestGLMClientPlanParsing
+=== PAUSE TestGLMClientPlanParsing
+=== RUN   TestGLMClientEvaluateParsing
+=== PAUSE TestGLMClientEvaluateParsing
+=== CONT  TestGLMClientChatAndTokenAccumulation
+=== CONT  TestGLMClientPlanParsing
+=== CONT  TestGLMClientChatTimeout
+=== CONT  TestGLMClientChatRetryOn429
+=== CONT  TestGLMClientEvaluateParsing
+--- PASS: TestGLMClientChatAndTokenAccumulation (0.00s)
+--- PASS: TestGLMClientChatRetryOn429 (0.00s)
+--- PASS: TestGLMClientPlanParsing (0.00s)
+--- PASS: TestGLMClientEvaluateParsing (0.00s)
+--- PASS: TestGLMClientChatTimeout (0.20s)
+PASS
+ok  	github.com/zyrakk/hivemind/internal/llm	0.487s

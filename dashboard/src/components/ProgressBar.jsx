@@ -36,8 +36,8 @@ export default function ProgressBar({ label, progress }) {
   const color = colorToken(percent);
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-3 text-[10px]">
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-[12px]">
         <p className="truncate font-medium text-hivemind-text">{label}</p>
         <p className="tabular-nums text-hivemind-dim">{String(percent).padStart(2, '0')}%</p>
       </div>
