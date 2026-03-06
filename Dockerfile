@@ -14,7 +14,6 @@ ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 
 WORKDIR /src
-RUN apk add --no-cache gcc musl-dev
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +21,7 @@ RUN go mod download
 COPY . .
 COPY --from=dashboard-builder /src/dashboard/dist ./dashboard/dist
 
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/orchestrator ./cmd/orchestrator
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/orchestrator ./cmd/orchestrator
 
 FROM node:22-alpine
 
