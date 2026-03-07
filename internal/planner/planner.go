@@ -693,10 +693,15 @@ func (p *Planner) createPlanViaEngine(
 				Role:    "recon",
 				Content: response,
 			})
-			thinkReq = engine.ThinkRequest{
-				PreviousThinking: append([]engine.ThinkTurn(nil), thinkingHistory...),
-				Response:         response,
-			}
+					thinkReq = engine.ThinkRequest{
+						Directive:        directive,
+						ProjectName:      projectID,
+						AgentsMD:         agentsMD,
+						ReconData:        reconData,
+						Cache:            cache,
+						PreviousThinking: append([]engine.ThinkTurn(nil), thinkingHistory...),
+						Response:         response,
+					}
 		default:
 			return nil, fmt.Errorf("unknown think result type: %s", thinkResult.Type)
 		}

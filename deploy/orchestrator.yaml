@@ -229,6 +229,8 @@ spec:
             secretName: codex-auth
         - name: claude-config
           emptyDir: {}
+        - name: repos
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
