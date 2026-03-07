@@ -3,9 +3,12 @@ Semi-autonomous Go orchestrator that turns directives into reviewed code changes
 
 ---
 
-## Current status (as of 2026-03-05)
+## Current status (as of 2026-03-07)
 ### Working now
-- End-to-end orchestration loop is implemented: directive -> plan -> approval -> Codex worker execution -> evaluation -> state/events update.
+- End-to-end orchestration loop: directive -> think loop -> plan -> approval -> Codex worker execution -> evaluation -> state/events update.
+- Swappable Engine layer with Claude Code CLI (primary) and GLM (fallback). Engine selection is automatic with Telegram switch notifications.
+- Two-phase planning: Think loop (iterative analysis with operator questions and repo data requests) -> Propose (generates TaskPlan with self-contained Codex prompts). If user rejects: Rebuild (one-shot refinement with feedback).
+- Recon runner gathers all repository context (tree, grep, cat, git log, diff, build, test, vet) via local shell commands at zero cost. Claude Code never reads repos directly.
 - Planner, launcher, evaluator, state store, dashboard API, and Telegram notifier are all wired in `cmd/orchestrator/main.go`.
 - Dashboard frontend is built and embedded into the Go binary (`dashboard/dist` + `dashboard_embed.go`), with 3 operator views:
   - global state
@@ -14,24 +17,26 @@ Semi-autonomous Go orchestrator that turns directives into reviewed code changes
 - SQLite persistence and migrations are operational (`projects`, `tasks`, `workers`, `events`) with status constraints.
 - Telegram bot supports bidirectional workflows (`/run`, `/status`, `/project`, `/approve`, `/reject`, `/pause`, `/resume`, `/consult`, `/pending`, `/help`).
 - Docker image publish to GHCR runs automatically on pushes to `main` (`.github/workflows/docker-publish.yml`).
+- UsageTracker enforces daily and weekly soft/hard limits for Claude Code (Max 5x quota), with automatic fallback to GLM on exhaustion.
 
 ### Partially implemented
 - Consultant integration (Claude/Gemini) is available and budget-aware, but only used when enabled and configured with API keys.
 - Evaluator retry/escalation loop is implemented, but there is no separate dedicated QA worker role yet.
 - Deployment is production-usable on k3s, but operational hardening (auth, RBAC, multi-replica strategy, stronger observability) is still pending.
+- Phase E (live end-to-end validation) is in progress.
 
 ### Known gaps
-- `config.yaml.example` still uses `codex.workers_dir`; runtime currently reads `codex.repos_dir` from `cmd/orchestrator/main.go`.
+- Repos use `emptyDir` volumes and require manual clone after pod restart. Clone-on-demand is planned but not implemented.
 - Worker execution mode is local process/tmux-based; a native k3s Job-based worker launcher is not implemented yet.
 - Dashboard API currently has no authentication layer; protect network access at ingress/tunnel level.
 
 ## What it does
-Hivemind receives a high-level directive and turns it into an executable plan. The planner uses GLM to break work into tasks, the launcher starts Codex workers on isolated Git branches, and the evaluator reviews each worker result before deciding next actions. State is persisted in SQLite so progress, events, and worker lifecycle survive restarts. Operators interact through the dashboard and Telegram, where the system sends completion, failure, review, and input-required notifications.
+Hivemind receives a high-level directive and turns it into an executable plan. The Engine layer selects between Claude Code CLI (primary, via Max 5x subscription) and GLM (fallback) to power planning and evaluation. Planning is two-phase: the Think loop lets the engine analyze the directive iteratively -- it can ask the operator questions via Telegram, request repository data via the recon runner, or search the web. Once analysis is complete, the Propose phase generates a task plan with self-contained prompts for each Codex worker. The launcher starts Codex workers on isolated Git branches, and the evaluator reviews each worker result (using diff, build, test, and vet output collected by the recon runner) before deciding next actions. State is persisted in SQLite so progress, events, and worker lifecycle survive restarts. Operators interact through the dashboard and Telegram, where the system sends completion, failure, review, and input-required notifications.
 
 ## Architecture
 ```text
 +-----------------------------------------------------------+
-|                    YOU (Decision maker)                   |
+|                    YOU (Decision maker)                    |
 |               Telegram / Dashboard / Claude Code          |
 +-----------------------------+-----------------------------+
                               |
@@ -39,15 +44,32 @@ Hivemind receives a high-level directive and turns it into an executable plan. T
 +-----------------------------------------------------------+
 |                ORCHESTRATOR (single Go binary)            |
 |                                                           |
+|  +---------------------------------------------------+   |
+|  |              ENGINE LAYER                          |   |
+|  |  +------------------+  +------------------+       |   |
+|  |  | Claude Code CLI  |  |    GLM Engine    |       |   |
+|  |  |   (primary)      |  |   (fallback)     |       |   |
+|  |  +------------------+  +------------------+       |   |
+|  |  +------------------+  +------------------+       |   |
+|  |  |  Usage Tracker   |  | Engine Manager   |       |   |
+|  |  | (daily/weekly)   |  | (auto-switch)    |       |   |
+|  |  +------------------+  +------------------+       |   |
+|  +---------------------------------------------------+   |
+|                                                           |
 |  +----------+  +----------+  +------------+               |
 |  | Planner  |  | Launcher |  | Evaluator  |               |
-|  |  (GLM)   |  | (Codex)  |  |   (GLM)    |               |
-|  +----------+  +----------+  +------------+               |
+|  | Think -> |  | (Codex)  |  | (Engine)   |               |
+|  | Propose  |  +----------+  +------------+               |
+|  +----------+                                             |
 |  +----------+  +----------+  +------------+               |
 |  |  State   |  | Notifier |  | Consultant |               |
 |  | (SQLite) |  |(Telegram)|  |(Claude/    |               |
 |  +----------+  +----------+  | Gemini API)|               |
 |                               +------------+              |
+|  +----------+                                             |
+|  |  Recon   |  Local shell commands (tree, grep, cat,     |
+|  | Runner   |  git log, diff, build, test, vet) -- free   |
+|  +----------+                                             |
 +-----------------------------+-----------------------------+
                               |
                               v
@@ -56,10 +78,11 @@ Hivemind receives a high-level directive and turns it into an executable plan. T
 |                                                           |
 |  +---------+  +---------+  +---------+  +---------+      |
 |  |Worker 1 |  |Worker 2 |  |Worker 3 |  |Worker N |      |
-|  |feature/ |  |feature/ |  |feature/ |  |feature/ |      |
+|  |hivemind/|  |hivemind/|  |hivemind/|  |hivemind/|      |
 |  +---------+  +---------+  +---------+  +---------+      |
 |                                                           |
 |  Each worker: isolated branch + AGENTS context + cache    |
+|  Model: GPT-5.4 (configurable) with reasoning effort     |
 +-----------------------------------------------------------+
                               |
                               v
@@ -72,16 +95,18 @@ Hivemind receives a high-level directive and turns it into an executable plan. T
 +-----------------------------------------------------------+
 ```
 
-The orchestrator is a single process that runs planning, execution, evaluation, API serving, and bot handling. A directive enters through stdin or Telegram, then the planner creates a task graph. Workers execute tasks in separate branches, while state updates flow into SQLite and are exposed through dashboard endpoints. The notifier reports key milestones and waits for operator decisions when required.
+The orchestrator is a single process that runs planning, execution, evaluation, API serving, and bot handling. A directive enters through stdin or Telegram, then the Engine's Think loop analyzes the work iteratively (asking questions, requesting repo data, searching the web) before generating a task plan. Plan approval messages in Telegram show which engine generated them: `[engine: claude-code]` or `[engine: glm/fallback]`. Workers execute tasks in separate branches, while state updates flow into SQLite and are exposed through dashboard endpoints. The evaluator receives diff, build, test, and vet output from the recon runner and decides next actions without touching the repository. The notifier reports key milestones and waits for operator decisions when required.
 
 ## Components
 | Component | Package | Role |
 |---|---|---|
-| Planner | `internal/planner` | Breaks directives into executable task plans. |
+| Engine | `internal/engine` | Swappable brain layer: Claude Code CLI and GLM implementations, manager with auto-fallback, usage tracker. |
+| Recon | `internal/recon` | Local shell command runner for repository inspection. Collects tree, grep, cat, git log, diff, build, test, vet output at zero cost. |
+| Planner | `internal/planner` | Two-phase planning: Think loop (iterative analysis) -> Propose (task plan generation). Rebuild on rejection. |
 | Launcher | `internal/launcher` | Starts Codex sessions and monitors worker lifecycle. |
-| Evaluator | `internal/evaluator` | Reviews worker output and chooses next action. |
+| Evaluator | `internal/evaluator` | Reviews worker output using recon-collected data and chooses next action. |
 | State | `internal/state` | Stores projects, tasks, workers, and events in SQLite. |
-| LLM clients | `internal/llm` | Wraps GLM and optional Claude/Gemini clients. |
+| LLM clients | `internal/llm` | Wraps GLM and optional Claude/Gemini clients. Budget tracking for consultants. |
 | Dashboard | `internal/dashboard` | Exposes REST endpoints and serves embedded dashboard UI. |
 | Notifier | `internal/notify` | Sends Telegram alerts and processes operator commands. |
 
@@ -90,10 +115,12 @@ The orchestrator is a single process that runs planning, execution, evaluation, 
 |---|---|
 | Go 1.22 | Orchestrator runtime |
 | SQLite | Persistent state store |
-| GLM API | Primary planning and evaluation |
-| Codex CLI | Worker execution engine |
+| Claude Code CLI | Primary planning and evaluation engine (via Max 5x subscription) |
+| GLM API | Fallback planning and evaluation engine |
+| Codex CLI | Worker execution engine (GPT-5.4 default, configurable model and reasoning effort) |
 | Claude/Gemini APIs | Optional consultant opinions |
 | Telegram Bot API | Operator notifications and commands |
+| Node.js 22+ | Runtime dependency for Claude Code CLI |
 | k3s | Cluster deployment target |
 | Cloudflare Tunnel | Private dashboard exposure |
 
@@ -102,7 +129,9 @@ The orchestrator is a single process that runs planning, execution, evaluation, 
 cmd/
   orchestrator/                 # Binary entrypoint and interactive loop
 internal/
-  planner/                      # Task planning pipeline
+  engine/                       # Engine interface, Claude Code, GLM, manager, usage tracker
+  recon/                        # Local shell command runner for repo inspection
+  planner/                      # Two-phase task planning pipeline
   launcher/                     # Worker lifecycle and branch handling
   evaluator/                    # Output evaluation and retries
   state/                        # SQLite schema, migrations, queries
@@ -111,7 +140,13 @@ internal/
   notify/                       # Telegram bot and message formatter
   directive/                    # Directive routing parser
 agents/                         # Per-project AGENTS context files
-prompts/                        # Planner/evaluator/consultant prompts
+prompts/
+  thinker_claude_code.txt       # Think loop system prompt (Claude Code)
+  proposer_claude_code.txt      # Plan generation system prompt (Claude Code)
+  evaluator_claude_code.txt     # Evaluation system prompt (Claude Code)
+  planner.txt                   # Planning prompt (GLM engine path)
+  evaluator.txt                 # Evaluation prompt (GLM engine path)
+  consultant.txt                # Consultant prompt
 dashboard/
   src/                          # Frontend source
   dist/                         # Built assets embedded in Go binary
@@ -130,6 +165,8 @@ sessions/
 - `make`
 - `git`
 - SQLite `3.x` (CLI optional, useful for inspection)
+- Claude Code CLI (`claude`) -- requires Node.js 22+ and a Max 5x subscription (optional if using GLM-only mode)
+- Codex CLI (`codex`) -- for worker execution
 
 ### Clone and build
 ```bash
@@ -144,24 +181,45 @@ make build
 cp config.yaml.example config.yaml
 ```
 
-`config.yaml.example` is the baseline reference for most sections (`glm`, `consultants`, `telegram`, `dashboard`, `database`, `git`). For Codex worker repos, use `codex.repos_dir` because runtime currently reads that key in `cmd/orchestrator/main.go`.
-
-Recommended runtime snippet:
+Key configuration sections:
 
 ```yaml
+engine:
+  primary: "claude-code"            # or "glm"
+  fallback: "glm"                   # or "claude-code" or "none"
+  claude_code:
+    binary: "claude"
+    model: "claude-opus-4-6"
+    timeout_minutes: 10
+    prompt_dir: "/app/prompts"
+    usage:
+      soft_limit_daily: 12
+      hard_limit_daily: 18
+      soft_limit_weekly: 70
+      hard_limit_weekly: 100
+
 codex:
   approval_mode: full-auto
   timeout_minutes: 30
   repos_dir: /absolute/path/to/local/git/repos
+  model: ""                         # empty = CLI default (GPT-5.4)
+  reasoning_effort: "xhigh"         # low, medium, high, xhigh
+```
+
+### Environment variables
+```bash
+export ZAI_API_KEY="your-zai-key"
+
+# Claude Code authentication (one of):
+export CLAUDE_CODE_OAUTH_TOKEN="your-oauth-token"
+# or configure claude CLI login directly
+
+# Optional Telegram integration:
+# export TELEGRAM_BOT_TOKEN="your-bot-token"
 ```
 
 ### Run locally
 ```bash
-export ZAI_API_KEY="your-zai-key"
-# Optional Telegram integration:
-# export TELEGRAM_BOT_TOKEN="your-bot-token"
-# export TELEGRAM_CHAT_ID="123456789"
-
 make run
 ```
 
@@ -182,19 +240,35 @@ go vet ./...
 ## Configuration reference
 | Section | What it controls | Key fields |
 |---|---|---|
-| `glm` (llm) | Primary planning and evaluation model client | `api_key_env`, `model`, `base_url`, `timeout` |
+| `engine` | Brain selection and fallback | `primary`, `fallback`, `claude_code.binary`, `claude_code.model`, `claude_code.timeout_minutes`, `claude_code.prompt_dir`, `claude_code.usage.*` |
+| `glm` (llm) | GLM model client (fallback engine) | `api_key_env`, `model`, `base_url`, `timeout` |
 | `consultants` | Optional secondary model clients and guardrails | `enabled`, `api_key_env`, `model`, `max_calls_per_day` |
 | `telegram` | Bot authentication and command access scope | `bot_token_env`, `allowed_chat_id` |
 | `git` | Worker branch naming and remote push target | `default_remote`, `branch_prefix` |
 | `dashboard` | HTTP server bind address for API and UI | `host`, `port` |
-| `codex` (workers) | Worker execution mode and time limits | `approval_mode`, `timeout_minutes`, `repos_dir` (legacy example still shows `workers_dir`) |
+| `codex` (workers) | Worker execution mode, time limits, model | `approval_mode`, `timeout_minutes`, `repos_dir`, `model`, `reasoning_effort` |
+| `database` | SQLite state store location | `path` |
 
 ## Deployment
-Hivemind is designed for k3s deployment with manifests in `deploy/`. The default architecture runs orchestrator, dashboard API/UI, and Telegram bot in the same pod (`hivemind-orchestrator`). `deploy/orchestrator.yaml` defines namespace, PVC, deployment, and service; `deploy/cloudflare-tunnel.yaml` exposes the dashboard through Cloudflare Tunnel. Keep secrets out of Git by copying `deploy/secrets.yaml.example` to `deploy/secrets.yaml` locally.
+Hivemind is designed for k3s deployment with manifests in `deploy/`. The default architecture runs orchestrator, dashboard API/UI, and Telegram bot in the same pod (`hivemind-orchestrator`). The Dockerfile base image is `node:22-alpine` (Claude Code CLI requires Node.js 22+). Both `claude` and `codex` CLI tools are installed in the image.
+
+The deployment includes two init containers:
+- `data-permissions`: ensures the PVC-backed `/data` directory is writable by the orchestrator process.
+- `claude-config-init`: generates `.claude.json` from the `claude-code-auth` K8s Secret for OAuth authentication.
 
 ```bash
+# Create secrets
 cp deploy/secrets.yaml.example deploy/secrets.yaml
 kubectl apply -f deploy/secrets.yaml
+
+# Claude Code OAuth (optional, for Max 5x auth)
+kubectl create secret generic claude-code-auth -n hivemind \
+  --from-literal=oauth-token="your-token" \
+  --from-literal=account-uuid="your-uuid" \
+  --from-literal=email="your-email" \
+  --from-literal=organization-uuid="your-org-uuid" \
+  --from-literal=onboarding-version="1"
+
 kubectl apply -f deploy/orchestrator.yaml
 # Optional dedicated tunnel deployment:
 # kubectl apply -f deploy/cloudflare-tunnel.yaml
@@ -203,8 +277,15 @@ kubectl apply -f deploy/orchestrator.yaml
 If your image tag is `latest` with `imagePullPolicy: Always`, trigger rollout after a new image is published:
 
 ```bash
-kubectl --kubeconfig /path/to/kubeconfig rollout restart deployment/hivemind-orchestrator -n hivemind
-kubectl --kubeconfig /path/to/kubeconfig rollout status deployment/hivemind-orchestrator -n hivemind
+kubectl rollout restart deployment/hivemind-orchestrator -n hivemind
+kubectl rollout status deployment/hivemind-orchestrator -n hivemind
+```
+
+Repos use `emptyDir` volumes and must be cloned manually after pod restarts:
+
+```bash
+kubectl exec deployment/hivemind-orchestrator -n hivemind -c orchestrator -- \
+  git clone https://github.com/user/repo.git /app/repos/repo
 ```
 
 ## Telegram bot
@@ -221,7 +302,7 @@ kubectl --kubeconfig /path/to/kubeconfig rollout status deployment/hivemind-orch
 | `/pending` | List active pending approvals. |
 | `/help` | Show command reference. |
 
-The bot sends notifications for task completed, worker failed, PR ready, needs input, and budget warning events.
+The bot sends notifications for task completed, worker failed, PR ready, needs input, engine switch, and budget warning events. Plan approval messages indicate which engine generated the plan: `[engine: claude-code]` or `[engine: glm/fallback]`.
 
 ## AGENTS.md system
 `AGENTS.md` files are structured project memory for both humans and workers. They encode project goals, architecture decisions, constraints, run/test commands, and session history so each worker starts with stable context. Use `templates/AGENTS_TEMPLATE.md` to create new project context files consistently. The `agents/` directory stores per-project context documents consumed by the orchestrator workflow.
@@ -268,9 +349,11 @@ If stdin is not a TTY, interactive prompts are disabled and only the HTTP server
 |---|---|
 | Phase 0 - foundations | done |
 | Phase 1 - dashboard web v1 | done (iterating UX/content quality) |
-| Phase 2 - GLM orchestrator v1 | in progress (core flow implemented) |
-| Phase 3 - notifications and communication | in progress (bidirectional bot implemented) |
+| Phase 2 - GLM orchestrator v1 | done (core flow implemented, now fallback engine) |
+| Phase 3 - notifications and communication | done (bidirectional bot implemented) |
 | Phase 4 - automated testing and self-correction | in progress (retry/escalation implemented, QA-worker role pending) |
+| Phase A-D - engine integration | done (Claude Code + GLM engine layer, recon runner, two-phase planning, evaluation) |
+| Phase E - live validation | in progress |
 | Phase 5 - self-improvement and metrics | planned |
 
 See `docs/roadmap.md` for full phase details.
