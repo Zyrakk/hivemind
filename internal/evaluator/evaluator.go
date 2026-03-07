@@ -515,15 +515,22 @@ func runGitDiff(workDir, revision string) (string, error) {
 }
 
 func readProjectAgentsForEvaluation(projectID int64, projectName string) (string, error) {
-	candidates := make([]string, 0, 3)
-	if projectID > 0 {
-		candidates = append(candidates, filepath.Join("agents", fmt.Sprintf("%d.md", projectID)))
-	}
+	candidates := make([]string, 0, 8)
 	if strings.TrimSpace(projectName) != "" {
 		name := strings.TrimSpace(projectName)
+		lower := strings.ToLower(name)
 		candidates = append(candidates,
 			filepath.Join("agents", name+".md"),
-			filepath.Join("agents", strings.ToLower(name)+".md"),
+			filepath.Join("agents", lower+".md"),
+			filepath.Join("/app/agents", name+".md"),
+			filepath.Join("/app/agents", lower+".md"),
+		)
+	}
+	if projectID > 0 {
+		numStr := fmt.Sprintf("%d.md", projectID)
+		candidates = append(candidates,
+			filepath.Join("agents", numStr),
+			filepath.Join("/app/agents", numStr),
 		)
 	}
 
@@ -531,6 +538,9 @@ func readProjectAgentsForEvaluation(projectID int64, projectName string) (string
 		data, err := os.ReadFile(candidate)
 		if err == nil {
 			return strings.TrimSpace(string(data)), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("read AGENTS file %s: %w", candidate, err)
 		}
 	}
 
