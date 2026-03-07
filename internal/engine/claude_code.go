@@ -371,7 +371,15 @@ func buildThinkPrompt(req ThinkRequest) string {
 	}
 
 	var builder strings.Builder
-	builder.WriteString("CONVERSATION SO FAR:\n\n")
+	builder.WriteString("PROJECT: ")
+	builder.WriteString(req.ProjectName)
+	builder.WriteString("\n\nDIRECTIVE: ")
+	builder.WriteString(req.Directive)
+	builder.WriteString("\n\nAGENTS.MD:\n")
+	builder.WriteString(req.AgentsMD)
+	builder.WriteString("\n\nREPOSITORY STATE:\n")
+	builder.WriteString(req.ReconData)
+	builder.WriteString("\n\nCONVERSATION SO FAR:\n\n")
 	builder.WriteString(formatThinkTurns(req.PreviousThinking))
 	builder.WriteString("[latest]: ")
 	builder.WriteString(req.Response)
