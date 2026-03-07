@@ -690,6 +690,17 @@ func (m *mockPlannerRecon) Run(ctx context.Context, commands []string) (*recon.R
 	return &recon.Result{Output: m.runOutput}, nil
 }
 
+func (m *mockPlannerRecon) RunInDir(ctx context.Context, dir string, commands []string) (*recon.Result, error) {
+	_ = ctx
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.runCalls++
+	m.lastCommands = append([]string(nil), commands...)
+	return &recon.Result{Output: m.runOutput}, nil
+}
+
 func cloneEnginePlanResult(in *engine.PlanResult) *engine.PlanResult {
 	if in == nil {
 		return nil
