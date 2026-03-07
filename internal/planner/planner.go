@@ -53,6 +53,7 @@ type plannerEngine interface {
 type plannerRecon interface {
 	RunDefault(ctx context.Context, repoPath string) (*recon.Result, error)
 	Run(ctx context.Context, commands []string) (*recon.Result, error)
+	RunInDir(ctx context.Context, dir string, commands []string) (*recon.Result, error)
 }
 
 type notifier interface {
@@ -629,9 +630,9 @@ func (p *Planner) createPlanViaEngine(
 	rc plannerRecon,
 	directive, projectID, agentsMD, cache string,
 ) (*engine.PlanResult, error) {
+	repoPath := resolveRepoPath(projectID)
 	var reconData string
-	if rc != nil {
-		repoPath := resolveRepoPath(projectID)
+        if rc != nil {
 		if repoPath != "" {
 			reconResult, err := rc.RunDefault(ctx, repoPath)
 			if err != nil {
@@ -681,7 +682,7 @@ func (p *Planner) createPlanViaEngine(
 			if rc == nil {
 				return nil, fmt.Errorf("engine requested recon commands but recon is not configured")
 			}
-			infoResult, runErr := rc.Run(ctx, commands)
+			infoResult, runErr := rc.RunInDir(ctx, repoPath, commands)
 			if runErr != nil {
 				return nil, fmt.Errorf("recon run: %w", runErr)
 			}

@@ -101,6 +101,17 @@ func (r *Runner) Run(ctx context.Context, commands []string) (*Result, error) {
 	return result, nil
 }
 
+
+func (r *Runner) RunInDir(ctx context.Context, dir string, commands []string) (*Result, error) {
+	if dir == "" {
+		return r.Run(ctx, commands)
+	}
+	prefixed := make([]string, len(commands))
+	for i, cmd := range commands {
+		prefixed[i] = fmt.Sprintf("cd %s && %s", dir, cmd)
+	}
+	return r.Run(ctx, prefixed)
+}
 func (r *Runner) RunDefault(ctx context.Context, repoPath string) (*Result, error) {
 	return r.Run(ctx, DefaultQueries(repoPath))
 }
