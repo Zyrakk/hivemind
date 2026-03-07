@@ -230,13 +230,25 @@ project_dir=""
 prompt=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    exec)
+      shift
+      ;;
     --full-auto)
       mode="$1"
       shift
       ;;
+    --model)
+      shift 2
+      ;;
+    --reasoning-effort)
+      shift 2
+      ;;
     -C|--cd)
       project_dir="$2"
       shift 2
+      ;;
+    --)
+      shift
       ;;
     *)
       prompt="$1"
@@ -267,9 +279,11 @@ exit "${MOCK_CODEX_EXIT:-0}"
 
 func TestBuildTmuxCommandUsesCurrentCodexSyntax(t *testing.T) {
 	launcher := NewWithStore(nil, LauncherConfig{
-		CodexBinary: "codex",
-		WorkDir:     t.TempDir(),
-		WorkersDir:  t.TempDir(),
+		CodexBinary:     "codex",
+		Model:           "gpt-5.4",
+		ReasoningEffort: "medium",
+		WorkDir:         t.TempDir(),
+		WorkersDir:      t.TempDir(),
 	})
 
 	cmdLine := launcher.buildTmuxCommand(
@@ -283,8 +297,26 @@ func TestBuildTmuxCommandUsesCurrentCodexSyntax(t *testing.T) {
 	if !strings.Contains(cmdLine, "--full-auto") {
 		t.Fatalf("expected --full-auto in tmux command, got: %s", cmdLine)
 	}
+	if !strings.Contains(cmdLine, "--model") {
+		t.Fatalf("expected --model in tmux command, got: %s", cmdLine)
+	}
+	if !strings.Contains(cmdLine, "--reasoning-effort") || !strings.Contains(cmdLine, "'medium'") {
+		t.Fatalf("expected reasoning effort flag in tmux command, got: %s", cmdLine)
+	}
 	if !strings.Contains(cmdLine, " -C ") {
 		t.Fatalf("expected -C in tmux command, got: %s", cmdLine)
+	}
+	modelIndex := strings.Index(cmdLine, "--model")
+	effortIndex := strings.Index(cmdLine, "--reasoning-effort")
+	repoIndex := strings.Index(cmdLine, " -C ")
+	if modelIndex == -1 || effortIndex == -1 || repoIndex == -1 {
+		t.Fatalf("expected model, reasoning, and -C positions in tmux command, got: %s", cmdLine)
+	}
+	if modelIndex > repoIndex {
+		t.Fatalf("expected --model before -C, got: %s", cmdLine)
+	}
+	if effortIndex > repoIndex {
+		t.Fatalf("expected --reasoning-effort before -C, got: %s", cmdLine)
 	}
 	if !strings.Contains(cmdLine, "$(cat ") {
 		t.Fatalf("expected prompt file expansion in tmux command, got: %s", cmdLine)
@@ -295,6 +327,99 @@ func TestBuildTmuxCommandUsesCurrentCodexSyntax(t *testing.T) {
 	if strings.Contains(cmdLine, "--context") {
 		t.Fatalf("unexpected legacy --context flag in tmux command: %s", cmdLine)
 	}
+}
+
+func TestBuildCodexArgsWithModel(t *testing.T) {
+	launcher := NewWithStore(nil, LauncherConfig{
+		CodexBinary:     "codex",
+		Model:           "gpt-5.4",
+		ReasoningEffort: "high",
+		WorkDir:         t.TempDir(),
+		WorkersDir:      t.TempDir(),
+	})
+
+	args := launcher.buildCodexArgs("/repo", "do something")
+
+	expect := []string{"exec", "--full-auto", "-C", "/repo", "--model", "gpt-5.4", "--reasoning-effort", "high", "--", "do something"}
+	if len(args) != len(expect) {
+		t.Fatalf("unexpected arg count: got %v want %v", args, expect)
+	}
+	for i := range expect {
+		if args[i] != expect[i] {
+			t.Fatalf("unexpected args[%d]: got %q want %q (full args: %v)", i, args[i], expect[i], args)
+		}
+	}
+	if indexOfArg(args, "--model") > indexOfArg(args, "--") {
+		t.Fatalf("expected --model before --, got %v", args)
+	}
+	if indexOfArg(args, "--reasoning-effort") > indexOfArg(args, "--") {
+		t.Fatalf("expected --reasoning-effort before --, got %v", args)
+	}
+}
+
+func TestBuildCodexArgsWithoutModel(t *testing.T) {
+	launcher := NewWithStore(nil, LauncherConfig{
+		CodexBinary: "codex",
+		WorkDir:     t.TempDir(),
+		WorkersDir:  t.TempDir(),
+	})
+
+	args := launcher.buildCodexArgs("/repo", "do something")
+	expect := []string{"exec", "--full-auto", "-C", "/repo", "--", "do something"}
+	if len(args) != len(expect) {
+		t.Fatalf("unexpected arg count: got %v want %v", args, expect)
+	}
+	for i := range expect {
+		if args[i] != expect[i] {
+			t.Fatalf("unexpected args[%d]: got %q want %q (full args: %v)", i, args[i], expect[i], args)
+		}
+	}
+	if indexOfArg(args, "--model") != -1 {
+		t.Fatalf("did not expect --model in args: %v", args)
+	}
+	if indexOfArg(args, "--reasoning-effort") != -1 {
+		t.Fatalf("did not expect --reasoning-effort in args: %v", args)
+	}
+}
+
+func TestBuildCodexArgsXhighEffort(t *testing.T) {
+	launcher := NewWithStore(nil, LauncherConfig{
+		CodexBinary:     "codex",
+		ReasoningEffort: "xhigh",
+		WorkDir:         t.TempDir(),
+		WorkersDir:      t.TempDir(),
+	})
+
+	args := launcher.buildCodexArgs("/repo", "do something")
+	effortIndex := indexOfArg(args, "--reasoning-effort")
+	if effortIndex == -1 {
+		t.Fatalf("expected --reasoning-effort in args: %v", args)
+	}
+	if effortIndex+1 >= len(args) || args[effortIndex+1] != "xhigh" {
+		t.Fatalf("expected xhigh effort in args: %v", args)
+	}
+}
+
+func TestInvalidReasoningEffortIgnored(t *testing.T) {
+	launcher := NewWithStore(nil, LauncherConfig{
+		CodexBinary:     "codex",
+		ReasoningEffort: "ultra",
+		WorkDir:         t.TempDir(),
+		WorkersDir:      t.TempDir(),
+	})
+
+	if launcher.config.ReasoningEffort != "" {
+		t.Fatalf("expected invalid reasoning effort to be ignored, got %q", launcher.config.ReasoningEffort)
+	}
+}
+
+func indexOfArg(args []string, target string) int {
+	for i, arg := range args {
+		if arg == target {
+			return i
+		}
+	}
+	return -1
 }
 
 func initGitRepo(t *testing.T, dir string) {

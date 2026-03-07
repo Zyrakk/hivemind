@@ -76,6 +76,8 @@ type LauncherConfig struct {
 	MaxConcurrentWorkers int
 	WorkersDir           string
 	ReposDir             string
+	Model                string
+	ReasoningEffort      string
 	WorkDir              string
 	GitRemote            string
 	BranchPrefix         string
@@ -159,6 +161,25 @@ func NewWithStore(db *state.Store, config LauncherConfig) *Launcher {
 	}
 	if config.Logger == nil {
 		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	config.Model = strings.TrimSpace(config.Model)
+	if re := strings.TrimSpace(config.ReasoningEffort); re != "" {
+		valid := map[string]bool{
+			"low":    true,
+			"medium": true,
+			"high":   true,
+			"xhigh":  true,
+		}
+		if !valid[re] {
+			config.Logger.Warn("invalid reasoning_effort, ignoring",
+				slog.String("value", re),
+				slog.String("valid", "low, medium, high, xhigh"))
+			config.ReasoningEffort = ""
+		} else {
+			config.ReasoningEffort = re
+		}
+	} else {
+		config.ReasoningEffort = ""
 	}
 
 	return &Launcher{
@@ -435,9 +456,19 @@ func (l *Launcher) startWorkerProcess(
 }
 
 func (l *Launcher) buildTmuxCommand(repoDir, promptFile, stdoutFile, stderrFile, exitFile string) string {
+	modelFlag := ""
+	if strings.TrimSpace(l.config.Model) != "" {
+		modelFlag = fmt.Sprintf("--model %s ", shellQuote(l.config.Model))
+	}
+	effortFlag := ""
+	if strings.TrimSpace(l.config.ReasoningEffort) != "" {
+		effortFlag = fmt.Sprintf("--reasoning-effort %s ", shellQuote(l.config.ReasoningEffort))
+	}
 	return fmt.Sprintf(
-		"%s exec --full-auto -C %s -- \"$(cat %s)\" > %s 2> %s; CODE=$?; echo $CODE > %s",
+		"%s exec --full-auto %s%s-C %s -- \"$(cat %s)\" > %s 2> %s; CODE=$?; echo $CODE > %s",
 		shellQuote(l.config.CodexBinary),
+		modelFlag,
+		effortFlag,
 		shellQuote(repoDir),
 		shellQuote(promptFile),
 		shellQuote(stdoutFile),
@@ -447,13 +478,15 @@ func (l *Launcher) buildTmuxCommand(repoDir, promptFile, stdoutFile, stderrFile,
 }
 
 func (l *Launcher) buildCodexArgs(repoDir, promptText string) []string {
-	return []string{
-		"exec",
-		"--full-auto",
-		"-C", repoDir,
-		"--",
-		promptText,
+	args := []string{"exec", "--full-auto", "-C", repoDir}
+	if strings.TrimSpace(l.config.Model) != "" {
+		args = append(args, "--model", l.config.Model)
 	}
+	if strings.TrimSpace(l.config.ReasoningEffort) != "" {
+		args = append(args, "--reasoning-effort", l.config.ReasoningEffort)
+	}
+	args = append(args, "--", promptText)
+	return args
 }
 
 func (l *Launcher) resolveProjectRepoURL(ctx context.Context, task Task) (string, error) {

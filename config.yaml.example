@@ -1,60 +1,90 @@
+# Hivemind Orchestrator Configuration
+# ====================================
+# Copy this file to config.yaml and fill in your values.
+# Never commit config.yaml to Git (it may contain sensitive paths).
+
+# --- Primary LLM (GLM) ---
+# Used as planner/evaluator when engine.primary = "glm",
+# or as fallback/consultant when Claude Code is primary.
 glm:
-  api_key_env: ZAI_API_KEY
-  model: glm-4.7
-  base_url: https://api.z.ai/v1
+  api_key_env: ZAI_API_KEY                                              # env var name (not the key itself)
+  model: glm-4.7                                                        # Z.AI model
+  base_url: https://open.bigmodel.cn/api/coding/paas/v4/chat/completions
   max_retries: 3
-  timeout: 60s
+  timeout: 120s
+  max_tokens: 32768                                                     # must be high to avoid JSON truncation
 
+# --- Engine (brain selection) ---
+# Controls which LLM handles planning and evaluation.
+# "claude-code": Claude Code CLI via Max subscription (recommended)
+# "glm": Z.AI GLM API (free, already paid subscription)
 engine:
-  primary: "glm"               # "claude-code" or "glm"
-  fallback: "none"             # "glm", "claude-code", or "none"
+  primary: "glm"                  # "claude-code" or "glm"
+  fallback: "none"                # "glm", "claude-code", or "none"
   claude_code:
-    binary: "claude"
-    model: ""                  # empty = CLI default from Max plan
-    timeout_minutes: 10
-    prompt_dir: "prompts"
-    usage:                     # Max 5x quota management (shared with claude.ai web)
-      soft_limit_daily: 12     # Telegram alert at this threshold
-      hard_limit_daily: 18     # stop + fallback to GLM
-      soft_limit_weekly: 70    # weekly alert threshold
-      hard_limit_weekly: 100   # weekly stop + fallback
+    binary: "claude"              # path to claude CLI binary
+    model: ""                     # Claude Code model override. Empty = subscription default (Sonnet 4.6).
+                                  # Options: claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5, opusplan
+    timeout_minutes: 10           # max time per Claude Code invocation
+    prompt_dir: "prompts"         # directory with thinker/proposer/evaluator prompt files
+    usage:                        # Max 5x quota management (shared with claude.ai web)
+      soft_limit_daily: 12        # Telegram alert at this daily threshold
+      hard_limit_daily: 18        # daily stop → fallback to GLM
+      soft_limit_weekly: 70       # Telegram alert at this weekly threshold
+      hard_limit_weekly: 100      # weekly stop → fallback to GLM
 
+# --- Consultants (optional second opinions) ---
+# Called when engine confidence is low or operator requests /consult.
+# Both disabled by default. Enable and set API keys to activate.
 consultants:
   claude:
     enabled: false
     api_key_env: ANTHROPIC_API_KEY
-    model: claude-sonnet-4-5
-    max_monthly_budget_usd: 100.0
-    max_calls_per_day: 50
+    model: claude-sonnet-4-5-20250929
+    max_monthly_budget_usd: 15.0
+    max_calls_per_day: 20
     use_for:
+      - plan_validation
       - architecture_review
-      - risk_assessment
+      - output_evaluation
   gemini:
     enabled: false
     api_key_env: GEMINI_API_KEY
-    model: gemini-2.5-pro
+    model: gemini-2.5-flash
     max_calls_per_day: 50
     use_for:
       - test_strategy
       - edge_case_analysis
 
+# --- Codex Workers ---
+# Codex CLI executes coding tasks on isolated Git branches.
+# Workers are the hands — they write code. Free on unlimited plan.
 codex:
-  approval_mode: auto
-  default_model: gpt-5-codex
-  timeout_minutes: 30
-  workers_dir: /tmp/hivemind-workers
+  approval_mode: full-auto        # must be "full-auto" for non-interactive execution
+  timeout_minutes: 30             # max time per worker
+  repos_dir: /path/to/your/repos  # absolute path to local git repos directory
+  model: ""                       # Codex model. Empty = CLI default (gpt-5.4 as of March 2026).
+                                  # Options: gpt-5.4, gpt-5.3-codex, gpt-5.3-codex-spark (Pro only)
+  reasoning_effort: "medium"      # low, medium, high, xhigh
+                                  # "medium" = fast daily driver. "xhigh" = slower, deeper thinking.
 
+# --- Telegram Bot ---
+# Bidirectional: sends notifications, receives commands.
+# Set allowed_chat_id to your personal chat ID to restrict access.
 telegram:
   bot_token_env: TELEGRAM_BOT_TOKEN
-  allowed_chat_id: 0
+  allowed_chat_id: 0              # 0 = accept all (insecure). Set to your chat ID.
 
+# --- Dashboard ---
 dashboard:
-  port: 8080
   host: 0.0.0.0
+  port: 8080
 
+# --- Database ---
 database:
-  path: ./hivemind.db
+  path: ./hivemind.db             # local dev path. k3s uses /data/hivemind.db via PVC.
 
+# --- Git ---
 git:
   default_remote: origin
-  branch_prefix: hivemind/
+  branch_prefix: "feature/"       # prefix for worker branches

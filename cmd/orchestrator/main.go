@@ -63,9 +63,11 @@ type runtimeConfig struct {
 		} `yaml:"gemini"`
 	} `yaml:"consultants"`
 	Codex struct {
-		ApprovalMode string `yaml:"approval_mode"`
-		TimeoutMins  int    `yaml:"timeout_minutes"`
-		ReposDir     string `yaml:"repos_dir"`
+		ApprovalMode    string `yaml:"approval_mode"`
+		TimeoutMins     int    `yaml:"timeout_minutes"`
+		ReposDir        string `yaml:"repos_dir"`
+		Model           string `yaml:"model"`
+		ReasoningEffort string `yaml:"reasoning_effort"`
 	} `yaml:"codex"`
 	Dashboard struct {
 		Port int    `yaml:"port"`
@@ -218,6 +220,8 @@ func main() {
 		TimeoutMinutes:       cfg.Codex.TimeoutMins,
 		MaxConcurrentWorkers: 5,
 		ReposDir:             cfg.Codex.ReposDir,
+		Model:                cfg.Codex.Model,
+		ReasoningEffort:      cfg.Codex.ReasoningEffort,
 		WorkDir:              ".",
 		GitRemote:            cfg.Git.DefaultRemote,
 		BranchPrefix:         cfg.Git.BranchPrefix,
@@ -517,6 +521,8 @@ func defaultRuntimeConfig() runtimeConfig {
 	cfg.Codex.ApprovalMode = "full-auto"
 	cfg.Codex.TimeoutMins = 30
 	cfg.Codex.ReposDir = "/home/stefan/Github_Repos"
+	cfg.Codex.Model = ""
+	cfg.Codex.ReasoningEffort = "medium"
 
 	cfg.Dashboard.Host = "0.0.0.0"
 	cfg.Dashboard.Port = 8080
