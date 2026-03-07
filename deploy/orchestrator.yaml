@@ -144,8 +144,6 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: TELEGRAM_CHAT_ID
-              value: "0"
             - name: DATABASE_PATH
               value: /data/hivemind.db
             - name: CONFIG_PATH

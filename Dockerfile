@@ -43,10 +43,10 @@ RUN apk add --no-cache \
 WORKDIR /data
 
 COPY --from=builder /out/orchestrator /usr/local/bin/orchestrator
-COPY --chown=hivemind:hivemind AGENTS.md /data/AGENTS.md
-COPY --chown=hivemind:hivemind prompts /data/prompts
-COPY --chown=hivemind:hivemind agents /data/agents
-COPY --chown=hivemind:hivemind templates /data/templates
+COPY --chown=hivemind:hivemind AGENTS.md /app/AGENTS.md
+COPY --chown=hivemind:hivemind prompts /app/prompts
+COPY --chown=hivemind:hivemind agents /app/agents
+COPY --chown=hivemind:hivemind templates /app/templates
 
 USER hivemind
 
