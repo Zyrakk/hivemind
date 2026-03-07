@@ -985,11 +985,14 @@ func readProjectAgents(projectID string) (string, error) {
 	}
 
 	candidates := []string{
+		filepath.Join("/app/agents", projectID+".md"),
+		filepath.Join("/app/agents", strings.ToLower(projectID)+".md"),
 		filepath.Join("agents", projectID+".md"),
 		filepath.Join("agents", strings.ToLower(projectID)+".md"),
 	}
 	if numeric, err := strconv.ParseInt(projectID, 10, 64); err == nil && numeric > 0 {
 		candidates = append(candidates, filepath.Join("agents", fmt.Sprintf("%d.md", numeric)))
+		candidates = append(candidates, filepath.Join("/app/agents", fmt.Sprintf("%d.md", numeric)))
 	}
 
 	for _, candidate := range candidates {
