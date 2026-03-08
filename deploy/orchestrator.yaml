@@ -108,21 +108,30 @@ spec:
           command: ["sh", "-c"]
           args:
             - |
-              mkdir -p /claude-config/.codex /claude-config/backups
+              mkdir -p /claude-config/.claude /claude-config/.codex /claude-config/backups
 
+              # --- Codex config ---
               # Seed codex auth.json only on first boot; preserve Codex-refreshed tokens on restarts
               if [ ! -f /claude-config/.codex/auth.json ] && [ -f /codex-auth-secret/auth.json ]; then
                 cp /codex-auth-secret/auth.json /claude-config/.codex/auth.json
                 chmod 600 /claude-config/.codex/auth.json
               fi
 
+              # Write codex config.toml if missing
+              if [ ! -f /claude-config/.codex/config.toml ]; then
+                cat > /claude-config/.codex/config.toml << 'CODEXCONF'
+              model = "gpt-5.4"
+              CODEXCONF
+              fi
+
+              # --- Claude Code config ---
               if [ -z "$ACCOUNT_UUID" ] || [ -z "$EMAIL" ] || [ -z "$ORG_UUID" ] || [ -z "$ONBOARDING_VERSION" ]; then
                 echo "claude-code-auth not fully configured; skipping Claude Code onboarding file"
-                printf '{}\n' > /claude-config/.claude.json
+                printf '{}\n' > /claude-config/.claude/.claude.json
                 exit 0
               fi
 
-              cat > /claude-config/.claude.json << 'ENDCONFIG'
+              cat > /claude-config/.claude/.claude.json << 'ENDCONFIG'
               {
                 "hasCompletedOnboarding": true,
                 "lastOnboardingVersion": "$(ONBOARDING_VERSION)",
@@ -133,10 +142,10 @@ spec:
                 }
               }
               ENDCONFIG
-              sed -i "s/\$(ONBOARDING_VERSION)/$ONBOARDING_VERSION/g" /claude-config/.claude.json
-              sed -i "s/\$(ACCOUNT_UUID)/$ACCOUNT_UUID/g" /claude-config/.claude.json
-              sed -i "s/\$(EMAIL)/$EMAIL/g" /claude-config/.claude.json
-              sed -i "s/\$(ORG_UUID)/$ORG_UUID/g" /claude-config/.claude.json
+              sed -i "s/\$(ONBOARDING_VERSION)/$ONBOARDING_VERSION/g" /claude-config/.claude/.claude.json
+              sed -i "s/\$(ACCOUNT_UUID)/$ACCOUNT_UUID/g" /claude-config/.claude/.claude.json
+              sed -i "s/\$(EMAIL)/$EMAIL/g" /claude-config/.claude/.claude.json
+              sed -i "s/\$(ORG_UUID)/$ORG_UUID/g" /claude-config/.claude/.claude.json
           env:
             - name: ACCOUNT_UUID
               valueFrom:
@@ -181,7 +190,7 @@ spec:
             - name: CONFIG_PATH
               value: /config/config.yaml
             - name: HOME
-              value: /home/hivemind/.claude
+              value: /home/hivemind
             - name: CLAUDE_CONFIG_DIR
               value: /home/hivemind/.claude
             - name: ZAI_API_KEY
@@ -223,7 +232,7 @@ spec:
             - name: repos
               mountPath: /app/repos
             - name: claude-config
-              mountPath: /home/hivemind/.claude
+              mountPath: /home/hivemind
           readinessProbe:
             httpGet:
               path: /health
@@ -243,10 +252,10 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "1"
+              memory: 1Gi
       volumes:
         - name: data
           persistentVolumeClaim:
