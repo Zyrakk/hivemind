@@ -1008,12 +1008,28 @@ func (t *TelegramBot) rejectPlan(ctx context.Context, approval *PendingApproval,
 
 	detail, err := t.store.GetProjectDetail(ctx, approval.ProjectID)
 	if err == nil {
-		blocked := state.TaskStatusBlocked
+		rejected := state.TaskStatusRejected
 		for _, task := range detail.Tasks {
-			if task.Status != state.TaskStatusPending && task.Status != state.TaskStatusInProgress {
+			if task.Status != state.TaskStatusPending && task.Status != state.TaskStatusInProgress && task.Status != state.TaskStatusBlocked {
 				continue
 			}
-			_ = t.store.UpdateTask(ctx, task.ID, state.TaskUpdate{Status: &blocked})
+			if updateErr := t.store.UpdateTask(ctx, task.ID, state.TaskUpdate{Status: &rejected}); updateErr != nil {
+				t.logger.Warn("failed to mark task as rejected",
+					slog.Int64("task_id", task.ID),
+					slog.Any("error", updateErr))
+			}
+		}
+
+		cancelled := state.WorkerStatusCancelled
+		for _, worker := range detail.Workers {
+			if worker.Status != state.WorkerStatusRunning && worker.Status != state.WorkerStatusPaused && worker.Status != state.WorkerStatusBlocked {
+				continue
+			}
+			if updateErr := t.store.UpdateWorker(ctx, worker.ID, state.WorkerUpdate{Status: &cancelled}); updateErr != nil {
+				t.logger.Warn("failed to cancel worker on plan rejection",
+					slog.Int64("worker_id", worker.ID),
+					slog.Any("error", updateErr))
+			}
 		}
 	}
 
