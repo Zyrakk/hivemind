@@ -241,6 +241,109 @@ func TestParseDoubleEncodedJSON(t *testing.T) {
 	}
 }
 
+func TestParseMarkdownFencedJSON(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"type\":\"ready\",\"summary\":\"Fenced JSON.\"}\n```"
+
+	got, err := parseThinkResult(raw)
+	if err != nil {
+		t.Fatalf("parseThinkResult() error = %v", err)
+	}
+
+	if got.Type != "ready" || got.Summary != "Fenced JSON." {
+		t.Fatalf("unexpected think result: %#v", *got)
+	}
+}
+
+func TestParseMarkdownFencedNoLangJSON(t *testing.T) {
+	t.Parallel()
+
+	raw := "```\n{\"type\":\"ready\",\"summary\":\"Fenced no lang.\"}\n```"
+
+	got, err := parseThinkResult(raw)
+	if err != nil {
+		t.Fatalf("parseThinkResult() error = %v", err)
+	}
+
+	if got.Type != "ready" || got.Summary != "Fenced no lang." {
+		t.Fatalf("unexpected think result: %#v", *got)
+	}
+}
+
+func TestParseJSONWithPreamble(t *testing.T) {
+	t.Parallel()
+
+	raw := "Based on the analysis, here's the plan:\n{\"type\":\"ready\",\"summary\":\"Preamble stripped.\"}"
+
+	got, err := parseThinkResult(raw)
+	if err != nil {
+		t.Fatalf("parseThinkResult() error = %v", err)
+	}
+
+	if got.Type != "ready" || got.Summary != "Preamble stripped." {
+		t.Fatalf("unexpected think result: %#v", *got)
+	}
+}
+
+func TestParseJSONWithTrailingText(t *testing.T) {
+	t.Parallel()
+
+	raw := "{\"type\":\"ready\",\"summary\":\"Has trailing.\"}\n\nLet me know if you need anything else!"
+
+	got, err := parseThinkResult(raw)
+	if err != nil {
+		t.Fatalf("parseThinkResult() error = %v", err)
+	}
+
+	if got.Type != "ready" || got.Summary != "Has trailing." {
+		t.Fatalf("unexpected think result: %#v", *got)
+	}
+}
+
+func TestParsePlanResultMarkdownFenced(t *testing.T) {
+	t.Parallel()
+
+	raw := "```json\n{\"tasks\":[{\"id\":\"T1\",\"title\":\"Do thing\",\"description\":\"desc\",\"branch_name\":\"feature/thing\",\"dependencies\":[],\"priority\":1,\"type\":\"coding\",\"prompt\":\"do it\"}],\"summary\":\"plan\",\"confidence\":0.9}\n```"
+
+	got, err := parsePlanResult(raw)
+	if err != nil {
+		t.Fatalf("parsePlanResult() error = %v", err)
+	}
+	if len(got.Tasks) != 1 || got.Tasks[0].ID != "T1" {
+		t.Fatalf("unexpected plan result: %#v", got)
+	}
+}
+
+func TestParseEvalResultWithPreamble(t *testing.T) {
+	t.Parallel()
+
+	raw := "Based on my review:\n{\"task_id\":\"T1\",\"verdict\":\"pass\",\"analysis\":\"Good.\",\"suggestions\":[],\"confidence\":0.95}"
+
+	got, err := parseEvalResult(raw)
+	if err != nil {
+		t.Fatalf("parseEvalResult() error = %v", err)
+	}
+	if got.Verdict != "pass" {
+		t.Fatalf("verdict = %q, want %q", got.Verdict, "pass")
+	}
+}
+
+func TestParseResultJSONNestedBraces(t *testing.T) {
+	t.Parallel()
+
+	raw := "Here is the result:\n{\"type\":\"ready\",\"summary\":\"Has {nested} braces.\"}\nDone."
+
+	got, err := parseThinkResult(raw)
+	if err != nil {
+		t.Fatalf("parseThinkResult() error = %v", err)
+	}
+
+	if got.Type != "ready" || got.Summary != "Has {nested} braces." {
+		t.Fatalf("unexpected think result: %#v", *got)
+	}
+}
+
 func TestValidateThinkResultBadType(t *testing.T) {
 	t.Parallel()
 

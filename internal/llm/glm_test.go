@@ -247,6 +247,65 @@ func writePrompts(t *testing.T, dir string) {
 	}
 }
 
+func TestGLMResolvePromptFallback(t *testing.T) {
+	t.Parallel()
+
+	// Create a fallback directory with the prompt file.
+	fallbackDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fallbackDir, "planner.txt"), []byte("fallback-prompt"), 0o644); err != nil {
+		t.Fatalf("write fallback prompt: %v", err)
+	}
+
+	// Override the fallback dirs for this test.
+	origFallback := glmPromptFallbackDirs
+	glmPromptFallbackDirs = []string{fallbackDir}
+	t.Cleanup(func() { glmPromptFallbackDirs = origFallback })
+
+	// Use a non-existent promptDir so the normal search fails.
+	client := NewGLMClient(GLMConfig{
+		APIKey:    "test-key",
+		PromptDir: "/nonexistent/prompts",
+		Logger:    discardLogger(),
+	})
+
+	got, err := client.loadPrompt("planner.txt")
+	if err != nil {
+		t.Fatalf("loadPrompt() error = %v", err)
+	}
+	if got != "fallback-prompt" {
+		t.Fatalf("loadPrompt() = %q, want %q", got, "fallback-prompt")
+	}
+}
+
+func TestGLMResolvePromptFallbackRelative(t *testing.T) {
+	t.Parallel()
+
+	// Create a fallback directory with the prompt file.
+	fallbackDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fallbackDir, "evaluator.txt"), []byte("fallback-eval"), 0o644); err != nil {
+		t.Fatalf("write fallback prompt: %v", err)
+	}
+
+	origFallback := glmPromptFallbackDirs
+	glmPromptFallbackDirs = []string{fallbackDir}
+	t.Cleanup(func() { glmPromptFallbackDirs = origFallback })
+
+	// Use relative promptDir "prompts" — won't find the file via cwd walk.
+	client := NewGLMClient(GLMConfig{
+		APIKey:    "test-key",
+		PromptDir: "nonexistent-prompts-dir",
+		Logger:    discardLogger(),
+	})
+
+	got, err := client.loadPrompt("evaluator.txt")
+	if err != nil {
+		t.Fatalf("loadPrompt() error = %v", err)
+	}
+	if got != "fallback-eval" {
+		t.Fatalf("loadPrompt() = %q, want %q", got, "fallback-eval")
+	}
+}
+
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
