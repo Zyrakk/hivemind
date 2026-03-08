@@ -460,15 +460,10 @@ func (l *Launcher) buildTmuxCommand(repoDir, promptFile, stdoutFile, stderrFile,
 	if strings.TrimSpace(l.config.Model) != "" {
 		modelFlag = fmt.Sprintf("--model %s ", shellQuote(l.config.Model))
 	}
-	effortFlag := ""
-	if strings.TrimSpace(l.config.ReasoningEffort) != "" {
-		effortFlag = fmt.Sprintf("--reasoning-effort %s ", shellQuote(l.config.ReasoningEffort))
-	}
 	return fmt.Sprintf(
-		"%s exec --full-auto %s%s-C %s -- \"$(cat %s)\" > %s 2> %s; CODE=$?; echo $CODE > %s",
+		"%s exec --full-auto %s-C %s -- \"$(cat %s)\" > %s 2> %s; CODE=$?; echo $CODE > %s",
 		shellQuote(l.config.CodexBinary),
 		modelFlag,
-		effortFlag,
 		shellQuote(repoDir),
 		shellQuote(promptFile),
 		shellQuote(stdoutFile),
@@ -481,9 +476,6 @@ func (l *Launcher) buildCodexArgs(repoDir, promptText string) []string {
 	args := []string{"exec", "--full-auto", "-C", repoDir}
 	if strings.TrimSpace(l.config.Model) != "" {
 		args = append(args, "--model", l.config.Model)
-	}
-	if strings.TrimSpace(l.config.ReasoningEffort) != "" {
-		args = append(args, "--reasoning-effort", l.config.ReasoningEffort)
 	}
 	args = append(args, "--", promptText)
 	return args
