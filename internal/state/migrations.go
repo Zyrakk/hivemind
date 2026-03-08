@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS workers (
     session_id TEXT NOT NULL,
     task_description TEXT NOT NULL,
     branch TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed', 'blocked')),
+    status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed', 'blocked', 'cancelled')),
     started_at DATETIME NOT NULL,
     finished_at DATETIME,
     error_message TEXT NOT NULL DEFAULT '',
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     project_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed', 'blocked')),
+    status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed', 'blocked', 'rejected')),
     priority INTEGER NOT NULL DEFAULT 0,
     depends_on TEXT NOT NULL DEFAULT '',
     assigned_worker_id INTEGER,
@@ -67,8 +67,53 @@ CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_id);
 CREATE INDEX IF NOT EXISTS idx_events_worker_id ON events(worker_id);
 `
 
+const migrationAddRejectedCancelled = `
+PRAGMA foreign_keys = OFF;
+
+-- Recreate workers table with 'cancelled' status
+CREATE TABLE IF NOT EXISTS workers_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    task_description TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'paused', 'completed', 'failed', 'blocked', 'cancelled')),
+    started_at DATETIME NOT NULL,
+    finished_at DATETIME,
+    error_message TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+INSERT OR IGNORE INTO workers_new SELECT * FROM workers;
+DROP TABLE IF EXISTS workers;
+ALTER TABLE workers_new RENAME TO workers;
+CREATE INDEX IF NOT EXISTS idx_workers_project_id ON workers(project_id);
+
+-- Recreate tasks table with 'rejected' status
+CREATE TABLE IF NOT EXISTS tasks_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('pending', 'in_progress', 'completed', 'failed', 'blocked', 'rejected')),
+    priority INTEGER NOT NULL DEFAULT 0,
+    depends_on TEXT NOT NULL DEFAULT '',
+    assigned_worker_id INTEGER,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY(assigned_worker_id) REFERENCES workers(id) ON DELETE SET NULL
+);
+INSERT OR IGNORE INTO tasks_new SELECT * FROM tasks;
+DROP TABLE IF EXISTS tasks;
+ALTER TABLE tasks_new RENAME TO tasks;
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_worker_id ON tasks(assigned_worker_id);
+
+PRAGMA foreign_keys = ON;
+`
+
 func Migrations() []string {
-	return []string{SchemaSQL}
+	return []string{SchemaSQL, migrationAddRejectedCancelled}
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {

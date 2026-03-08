@@ -34,6 +34,7 @@ const (
 	WorkerStatusCompleted = "completed"
 	WorkerStatusFailed    = "failed"
 	WorkerStatusBlocked   = "blocked"
+	WorkerStatusCancelled = "cancelled"
 )
 
 const (
@@ -42,6 +43,7 @@ const (
 	TaskStatusCompleted  = "completed"
 	TaskStatusFailed     = "failed"
 	TaskStatusBlocked    = "blocked"
+	TaskStatusRejected   = "rejected"
 )
 
 type Project struct {
@@ -1265,7 +1267,7 @@ func isValidProjectStatus(status string) bool {
 
 func isValidWorkerStatus(status string) bool {
 	switch status {
-	case WorkerStatusRunning, WorkerStatusPaused, WorkerStatusCompleted, WorkerStatusFailed, WorkerStatusBlocked:
+	case WorkerStatusRunning, WorkerStatusPaused, WorkerStatusCompleted, WorkerStatusFailed, WorkerStatusBlocked, WorkerStatusCancelled:
 		return true
 	default:
 		return false
@@ -1274,7 +1276,7 @@ func isValidWorkerStatus(status string) bool {
 
 func isValidTaskStatus(status string) bool {
 	switch status {
-	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked:
+	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusFailed, TaskStatusBlocked, TaskStatusRejected:
 		return true
 	default:
 		return false
