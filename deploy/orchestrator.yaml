@@ -55,6 +55,18 @@ spec:
     requests:
       storage: 1Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hivemind-claude-config
+  namespace: hivemind
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 64Mi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,10 +94,12 @@ spec:
       initContainers:
         - name: data-permissions
           image: busybox:1.36
-          command: ["sh", "-c", "chown -R 10001:10001 /data && chmod -R 775 /data"]
+          command: ["sh", "-c", "chown -R 10001:10001 /data /claude-config && chmod -R 775 /data"]
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: claude-config
+              mountPath: /claude-config
           securityContext:
             runAsUser: 0
             runAsNonRoot: false
@@ -96,8 +110,8 @@ spec:
             - |
               mkdir -p /claude-config/.codex /claude-config/backups
 
-              # Copy codex auth.json to writable location so Codex can refresh expired tokens
-              if [ -f /codex-auth-secret/auth.json ]; then
+              # Seed codex auth.json only on first boot; preserve Codex-refreshed tokens on restarts
+              if [ ! -f /claude-config/.codex/auth.json ] && [ -f /codex-auth-secret/auth.json ]; then
                 cp /codex-auth-secret/auth.json /claude-config/.codex/auth.json
                 chmod 600 /claude-config/.codex/auth.json
               fi
@@ -244,7 +258,8 @@ spec:
           secret:
             secretName: codex-auth
         - name: claude-config
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: hivemind-claude-config
         - name: repos
           emptyDir: {}
 ---
