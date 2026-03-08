@@ -110,6 +110,19 @@ spec:
             - |
               mkdir -p /claude-config/.claude /claude-config/.codex /claude-config/backups
 
+              # --- Git credentials ---
+              if [ -n "$GITHUB_TOKEN" ]; then
+                cat > /claude-config/.gitconfig << 'GITCONF'
+              [credential]
+                helper = store
+              [user]
+                name = Hivemind
+                email = hivemind@zyrak.cloud
+              GITCONF
+                echo "https://zyrakk:${GITHUB_TOKEN}@github.com" > /claude-config/.git-credentials
+                chmod 600 /claude-config/.git-credentials
+              fi
+
               # --- Codex config ---
               # Seed codex auth.json only on first boot; preserve Codex-refreshed tokens on restarts
               if [ ! -f /claude-config/.codex/auth.json ] && [ -f /codex-auth-secret/auth.json ]; then
@@ -143,6 +156,12 @@ spec:
               }
               ENDCONFIG
           env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-auth
+                  key: token
+                  optional: true
             - name: ACCOUNT_UUID
               valueFrom:
                 secretKeyRef:

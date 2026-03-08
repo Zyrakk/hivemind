@@ -307,13 +307,22 @@ func (c *GLMClient) loadPrompt(filename string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+var glmPromptFallbackDirs = []string{"/app/prompts"}
+
 func (c *GLMClient) resolvePromptPath(filename string) (string, error) {
 	if filepath.IsAbs(c.promptDir) {
 		path := filepath.Join(c.promptDir, filename)
-		if _, err := os.Stat(path); err != nil {
-			return "", fmt.Errorf("prompt %q not found in %s", filename, c.promptDir)
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
 		}
-		return path, nil
+		// Try fallback directories.
+		for _, fallback := range glmPromptFallbackDirs {
+			candidate := filepath.Join(fallback, filename)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
+			}
+		}
+		return "", fmt.Errorf("prompt %q not found in %s", filename, c.promptDir)
 	}
 
 	workingDir, err := os.Getwd()
@@ -333,6 +342,14 @@ func (c *GLMClient) resolvePromptPath(filename string) (string, error) {
 			break
 		}
 		searchDir = parent
+	}
+
+	// Try fallback directories.
+	for _, fallback := range glmPromptFallbackDirs {
+		candidate := filepath.Join(fallback, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
 	}
 
 	return "", fmt.Errorf("prompt %q not found (searched from %s)", filename, workingDir)

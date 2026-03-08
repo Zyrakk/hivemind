@@ -510,25 +510,88 @@ func parseResultJSON[T any](raw string) (T, error) {
 		return result, errors.New("empty result")
 	}
 
-	directErr := json.Unmarshal([]byte(trimmed), &result)
-	if directErr == nil {
+	// Fast path: direct parse.
+	if err := json.Unmarshal([]byte(trimmed), &result); err == nil {
 		return result, nil
 	}
 
-	if !strings.HasPrefix(trimmed, "\"") {
-		return result, fmt.Errorf("decode result json: %w", directErr)
+	// Double-encoded JSON string.
+	if strings.HasPrefix(trimmed, "\"") {
+		var inner string
+		if err := json.Unmarshal([]byte(trimmed), &inner); err == nil {
+			if err := json.Unmarshal([]byte(strings.TrimSpace(inner)), &result); err == nil {
+				return result, nil
+			}
+		}
 	}
 
-	var inner string
-	if err := json.Unmarshal([]byte(trimmed), &inner); err != nil {
-		return result, fmt.Errorf("decode result json: %w", directErr)
+	// Strip markdown fences and retry.
+	if stripped := stripMarkdownFences(trimmed); stripped != trimmed {
+		if err := json.Unmarshal([]byte(stripped), &result); err == nil {
+			return result, nil
+		}
 	}
 
-	if err := json.Unmarshal([]byte(strings.TrimSpace(inner)), &result); err != nil {
-		return result, fmt.Errorf("decode double-encoded result json: %w", err)
+	// Extract first JSON object by brace matching.
+	if extracted, ok := extractJSONObject(trimmed); ok {
+		if err := json.Unmarshal([]byte(extracted), &result); err == nil {
+			return result, nil
+		}
 	}
 
-	return result, nil
+	snippet := trimmed
+	if len(snippet) > 200 {
+		snippet = snippet[:200]
+	}
+	return result, fmt.Errorf("decode result json: could not extract valid JSON from response (raw prefix: %q)", snippet)
+}
+
+var markdownFencePattern = regexp.MustCompile("(?s)```(?:json)?\\s*\n?(.*?)\\s*```")
+
+func stripMarkdownFences(s string) string {
+	matches := markdownFencePattern.FindStringSubmatch(s)
+	if len(matches) < 2 {
+		return s
+	}
+	return strings.TrimSpace(matches[1])
+}
+
+func extractJSONObject(s string) (string, bool) {
+	start := strings.IndexByte(s, '{')
+	if start == -1 {
+		return "", false
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 func validateThinkResult(result *ThinkResult) error {
