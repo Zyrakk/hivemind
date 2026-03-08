@@ -131,21 +131,17 @@ spec:
                 exit 0
               fi
 
-              cat > /claude-config/.claude/.claude.json << 'ENDCONFIG'
+              cat > /claude-config/.claude/.claude.json << ENDCONFIG
               {
                 "hasCompletedOnboarding": true,
-                "lastOnboardingVersion": "$(ONBOARDING_VERSION)",
+                "lastOnboardingVersion": "$ONBOARDING_VERSION",
                 "oauthAccount": {
-                  "accountUuid": "$(ACCOUNT_UUID)",
-                  "emailAddress": "$(EMAIL)",
-                  "organizationUuid": "$(ORG_UUID)"
+                  "accountUuid": "$ACCOUNT_UUID",
+                  "emailAddress": "$EMAIL",
+                  "organizationUuid": "$ORG_UUID"
                 }
               }
               ENDCONFIG
-              sed -i "s/\$(ONBOARDING_VERSION)/$ONBOARDING_VERSION/g" /claude-config/.claude/.claude.json
-              sed -i "s/\$(ACCOUNT_UUID)/$ACCOUNT_UUID/g" /claude-config/.claude/.claude.json
-              sed -i "s/\$(EMAIL)/$EMAIL/g" /claude-config/.claude/.claude.json
-              sed -i "s/\$(ORG_UUID)/$ORG_UUID/g" /claude-config/.claude/.claude.json
           env:
             - name: ACCOUNT_UUID
               valueFrom:
