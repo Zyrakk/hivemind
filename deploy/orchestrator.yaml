@@ -96,6 +96,12 @@ spec:
             - |
               mkdir -p /claude-config/.codex /claude-config/backups
 
+              # Copy codex auth.json to writable location so Codex can refresh expired tokens
+              if [ -f /codex-auth-secret/auth.json ]; then
+                cp /codex-auth-secret/auth.json /claude-config/.codex/auth.json
+                chmod 600 /claude-config/.codex/auth.json
+              fi
+
               if [ -z "$ACCOUNT_UUID" ] || [ -z "$EMAIL" ] || [ -z "$ORG_UUID" ] || [ -z "$ONBOARDING_VERSION" ]; then
                 echo "claude-code-auth not fully configured; skipping Claude Code onboarding file"
                 printf '{}\n' > /claude-config/.claude.json
@@ -145,6 +151,9 @@ spec:
           volumeMounts:
             - name: claude-config
               mountPath: /claude-config
+            - name: codex-auth
+              mountPath: /codex-auth-secret
+              readOnly: true
       containers:
         - name: orchestrator
           image: ghcr.io/zyrakk/hivemind:latest
@@ -197,10 +206,6 @@ spec:
             - name: config
               mountPath: /config/config.yaml
               subPath: config.yaml
-            - name: codex-auth
-              mountPath: /home/hivemind/.claude/.codex/auth.json
-              subPath: auth.json
-              readOnly: true
             - name: repos
               mountPath: /app/repos
             - name: claude-config
