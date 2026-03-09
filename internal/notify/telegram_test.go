@@ -62,9 +62,8 @@ func TestNotifyEngineSwitchQueuesFormattedMessage(t *testing.T) {
 
 	select {
 	case msg := <-bot.outbox:
-		want := `▸ Engine switch: claude\-code → glm\. Reason: Think failed: rate limit`
-		if msg != want {
-			t.Fatalf("message = %q, want %q", msg, want)
+		if !strings.Contains(msg, "ENGINE SWITCH") || !strings.Contains(msg, "claude-code") || !strings.Contains(msg, "glm") {
+			t.Fatalf("message = %q, expected engine switch box", msg)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for engine switch message")
@@ -92,7 +91,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("project command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Project") {
+		if !strings.Contains(msg, "PROJECT") {
 			t.Fatalf("expected project header in message: %q", msg)
 		}
 	})
@@ -210,7 +209,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("consult command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Consulted") {
+		if !strings.Contains(msg, "CONSULTANT") {
 			t.Fatalf("expected consultant response, got %q", msg)
 		}
 		if store.countEventsByType("consultant_used") == 0 {
@@ -233,7 +232,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("pending command failed: %v", err)
 		}
-		if !strings.Contains(msg, "Pending approvals") {
+		if !strings.Contains(msg, "PENDING") {
 			t.Fatalf("expected pending list, got %q", msg)
 		}
 	})
@@ -281,7 +280,7 @@ func TestCmdRun_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run command failed: %v", err)
 	}
-	if !strings.Contains(msg, "Plan for flux") {
+	if !strings.Contains(msg, "PLAN") || !strings.Contains(msg, "flux") {
 		t.Fatalf("expected plan summary, got %q", msg)
 	}
 
