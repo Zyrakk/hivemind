@@ -389,7 +389,7 @@ func RenderProgressTimeline(tl *ProgressTimeline) string {
 	}
 	box.WriteString("└────────────────────────────")
 
-	return codeBlock(box.String())
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func formatEscapedLines(lines ...string) string {

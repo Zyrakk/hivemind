@@ -285,7 +285,7 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 		return nil, err
 	}
 
-	projectRef := strings.TrimSpace(projectName)
+	projectRef := strings.ToLower(strings.TrimSpace(projectName))
 	if projectRef == "" {
 		projectRef = strconv.FormatInt(taskRecord.ProjectID, 10)
 	}

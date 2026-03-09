@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -326,6 +327,24 @@ func TestRenderProgressTimeline_Nil(t *testing.T) {
 	got := RenderProgressTimeline(nil)
 	if got != "" {
 		t.Fatalf("expected empty for nil, got %q", got)
+	}
+}
+
+func TestRenderProgressTimeline_TruncatesLongTimeline(t *testing.T) {
+	tl := &ProgressTimeline{
+		Project: "nhi-watch",
+		Title:   "Task title",
+	}
+	for i := 0; i < 200; i++ {
+		tl.Entries = append(tl.Entries, ProgressEntry{
+			Stage:  fmt.Sprintf("stage-%d-with-some-longer-text-padding", i),
+			Detail: "some detail text here",
+			Status: ProgressStatusDone,
+		})
+	}
+	got := RenderProgressTimeline(tl)
+	if len([]rune(got)) > 4096 {
+		t.Fatalf("rendered timeline exceeds 4096 chars: %d", len([]rune(got)))
 	}
 }
 
