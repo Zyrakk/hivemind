@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/checklist"
 	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
@@ -83,7 +84,7 @@ type CompletionResult struct {
 
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
-	NotifyPRReady(ctx context.Context, projectID, prURL, summary, approvalID string) error
+	NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []checklist.CheckResult, userChecks []checklist.UserCheck) error
 	NotifyProgress(ctx context.Context, project, stage, detail string) error
 }
 
@@ -304,11 +305,13 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 
 	var evaluation *llm.Evaluation
 	var diff string
+	var checkResults []checkResult
 
 	// Checklist-based evaluation: runs before engine/GLM to save quota
 	if taskHasChecklists && len(checklists.AutomatedChecklist) > 0 && rc != nil {
 		repoPath := resolveRepoPathForEval(projectName, session, launcherWorkDir(e.launcher))
-		checkResults, checkErr := e.evaluateWithChecklist(ctx, checklists, repoPath)
+		var checkErr error
+		checkResults, checkErr = e.evaluateWithChecklist(ctx, checklists, repoPath)
 		if checkErr == nil {
 			allPassed := true
 			var failedChecks []string
@@ -483,12 +486,11 @@ postEval:
 			}
 		}
 		if evalNotifier != nil {
-			summary := strings.TrimSpace(evaluation.Summary)
-			if summary == "" {
-				summary = fmt.Sprintf("Task '%s' accepted and ready for review", strings.TrimSpace(taskRecord.Title))
-			}
 			approvalID := fmt.Sprintf("pr-%d-%d", taskRecord.ProjectID, taskID)
-			_ = evalNotifier.NotifyPRReady(ctx, projectRef, "", summary, approvalID)
+			autoResults := convertCheckResults(checkResults)
+			userChecks := convertUserChecks(checklists.UserChecklist)
+			branch := strings.TrimSpace(session.Branch)
+			_ = evalNotifier.NotifyPRReady(ctx, projectRef, branch, approvalID, autoResults, userChecks)
 		}
 	case "iterate":
 		nextRetry := retryCount + 1
@@ -1110,4 +1112,25 @@ func (e *Evaluator) setRetryCount(taskID int64, retry int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.retries[taskID] = retry
+}
+
+func convertCheckResults(results []checkResult) []checklist.CheckResult {
+	out := make([]checklist.CheckResult, len(results))
+	for i, r := range results {
+		out[i] = checklist.CheckResult{
+			Description: r.Check.Description,
+			Command:     r.Check.Command,
+			Passed:      r.Passed,
+			Output:      r.Output,
+		}
+	}
+	return out
+}
+
+func convertUserChecks(checks []UserCheck) []checklist.UserCheck {
+	out := make([]checklist.UserCheck, len(checks))
+	for i, c := range checks {
+		out[i] = checklist.UserCheck{Description: c.Description}
+	}
+	return out
 }

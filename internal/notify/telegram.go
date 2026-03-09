@@ -292,7 +292,7 @@ func (t *TelegramBot) NotifyNeedsInput(ctx context.Context, projectID, question,
 	return t.enqueueMessage(ctx, FormatNeedsInputMessage(projectID, question, approvalID))
 }
 
-func (t *TelegramBot) NotifyPRReady(ctx context.Context, projectID, prURL, summary, approvalID string) error {
+func (t *TelegramBot) NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) error {
 	approvalID = normalizeApprovalID(approvalID)
 	now := t.nowFn().UTC()
 
@@ -300,7 +300,7 @@ func (t *TelegramBot) NotifyPRReady(ctx context.Context, projectID, prURL, summa
 		ID:          approvalID,
 		Type:        "pr",
 		ProjectID:   strings.TrimSpace(projectID),
-		Description: strings.TrimSpace(summary),
+		Description: fmt.Sprintf("PR ready on branch %s", strings.TrimSpace(branch)),
 		AcceptsText: false,
 		CreatedAt:   now,
 		ExpiresAt:   now.Add(t.prApprovalTTL),
@@ -309,7 +309,7 @@ func (t *TelegramBot) NotifyPRReady(ctx context.Context, projectID, prURL, summa
 		return err
 	}
 
-	return t.enqueueMessage(ctx, FormatPRReadyMessage(projectID, prURL, summary, approvalID))
+	return t.enqueueMessage(ctx, FormatPRReadyMessage(projectID, branch, approvalID, autoResults, userChecks))
 }
 
 func (t *TelegramBot) NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error {

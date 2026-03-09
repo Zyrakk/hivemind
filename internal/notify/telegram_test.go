@@ -31,7 +31,7 @@ func TestNoopNotifier(t *testing.T) {
 	if err := n.NotifyNeedsInput(ctx, "p", "q", "a"); err != nil {
 		t.Fatalf("NotifyNeedsInput() error = %v", err)
 	}
-	if err := n.NotifyPRReady(ctx, "p", "u", "s", "a"); err != nil {
+	if err := n.NotifyPRReady(ctx, "p", "main", "a1", nil, nil); err != nil {
 		t.Fatalf("NotifyPRReady() error = %v", err)
 	}
 	if err := n.NotifyWorkerFailed(ctx, "p", "t", "e"); err != nil {

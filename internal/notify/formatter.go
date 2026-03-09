@@ -6,8 +6,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/checklist"
 	"github.com/zyrakk/hivemind/internal/state"
 )
+
+// CheckResult is an alias for checklist.CheckResult.
+type CheckResult = checklist.CheckResult
+
+// UserCheck is an alias for checklist.UserCheck.
+type UserCheck = checklist.UserCheck
 
 const telegramMessageLimit = 4096
 
@@ -75,11 +82,10 @@ func FormatNeedsInputMessage(projectID, question, approvalID string) string {
 	return formatEscapedLines(lines...)
 }
 
-func FormatPRReadyMessage(projectID, prURL, summary, approvalID string) string {
+func FormatPRReadyMessage(projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) string {
 	lines := []string{
 		EscapeMarkdownV2(fmt.Sprintf("◎ %s: PR ready for review", projectID)),
-		EscapeMarkdownV2(summary),
-		EscapeMarkdownV2("→ ") + MarkdownV2Link("Open PR", prURL),
+		EscapeMarkdownV2(fmt.Sprintf("Branch: %s", branch)),
 		EscapeMarkdownV2(fmt.Sprintf("Reply with /approve %s or /reject %s {reason}", approvalID, approvalID)),
 	}
 	return TruncateTelegramMessage(strings.Join(compactLines(lines), "\n"))

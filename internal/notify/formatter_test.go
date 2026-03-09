@@ -46,7 +46,7 @@ func TestFormatNotificationMessages(t *testing.T) {
 		},
 		{
 			name: "pr ready",
-			msg:  FormatPRReadyMessage("Flux", "https://example.com/pr/12", "Cambios listos", "def456"),
+			msg:  FormatPRReadyMessage("Flux", "feature/cambios", "def456", nil, nil),
 			want: "◎",
 		},
 		{
@@ -170,7 +170,7 @@ func TestFormatterNoOldEmojis(t *testing.T) {
 		FormatStatusMessage(global),
 		FormatProjectDetailMessage(detail),
 		FormatNeedsInputMessage("flux", "Need input", "a-1"),
-		FormatPRReadyMessage("flux", "https://example.com/pr/1", "Summary", "a-2"),
+		FormatPRReadyMessage("flux", "feature/task", "a-2", nil, nil),
 		FormatWorkerFailedMessage("flux", "Task", "boom"),
 		FormatTaskCompletedMessage("flux", "Task"),
 		FormatConsultantUsedMessage("claude", "Question", "Answer"),

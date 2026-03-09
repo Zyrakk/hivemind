@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/checklist"
 	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
@@ -595,7 +596,7 @@ func (m *mockNotifier) NotifyNeedsInput(_ context.Context, _, _, _ string) error
 	return nil
 }
 
-func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _, _ string) error {
+func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _ string, _ []checklist.CheckResult, _ []checklist.UserCheck) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.prReadyCalls++
