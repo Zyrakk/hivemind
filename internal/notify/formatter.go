@@ -338,18 +338,6 @@ func FormatQuotaAlertMessage(dailyUsed, dailyLimit, weeklyUsed, weeklyLimit int)
 	return codeBlock(box.String())
 }
 
-func MarkdownV2Link(label, rawURL string) string {
-	label = EscapeMarkdownV2(label)
-	url := strings.TrimSpace(rawURL)
-	url = strings.ReplaceAll(url, `\`, `\\`)
-	url = strings.ReplaceAll(url, ")", `\)`)
-	url = strings.ReplaceAll(url, "(", `\(`)
-	if url == "" {
-		return label
-	}
-	return "[" + label + "](" + url + ")"
-}
-
 func formatEscapedLines(lines ...string) string {
 	escaped := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -360,17 +348,6 @@ func formatEscapedLines(lines ...string) string {
 		escaped = append(escaped, EscapeMarkdownV2(line))
 	}
 	return TruncateTelegramMessage(strings.Join(escaped, "\n"))
-}
-
-func compactLines(lines []string) []string {
-	result := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		result = append(result, line)
-	}
-	return result
 }
 
 func formatProjectSummaryLine(project state.ProjectSummary) string {
