@@ -110,6 +110,8 @@ type TelegramBot struct {
 	sendRatePerSec   int
 	lastProjectRef   string
 	lastProjectRefMu sync.RWMutex
+	progressMu       sync.Mutex
+	lastProgressAt   map[string]time.Time
 
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
@@ -324,6 +326,30 @@ func (t *TelegramBot) NotifyConsultantUsed(ctx context.Context, consultantName, 
 
 func (t *TelegramBot) NotifyBudgetWarning(ctx context.Context, consultantName string, percentUsed float64) error {
 	return t.enqueueMessage(ctx, FormatBudgetWarningMessage(consultantName, percentUsed))
+}
+
+func (t *TelegramBot) NotifyProgress(ctx context.Context, project, stage, detail string) error {
+	_ = ctx
+	if t == nil || !t.started.Load() {
+		return nil
+	}
+
+	key := strings.TrimSpace(project) + "|" + strings.TrimSpace(stage)
+	now := t.nowFn()
+
+	t.progressMu.Lock()
+	if t.lastProgressAt == nil {
+		t.lastProgressAt = make(map[string]time.Time)
+	}
+	if last, ok := t.lastProgressAt[key]; ok && now.Sub(last) < 5*time.Second {
+		t.progressMu.Unlock()
+		return nil
+	}
+	t.lastProgressAt[key] = now
+	t.progressMu.Unlock()
+
+	message := formatEscapedLines(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
+	return t.sendSilentMessage(message)
 }
 
 func (t *TelegramBot) QueueMessage(message string) {
@@ -1374,6 +1400,25 @@ func (t *TelegramBot) sendMessage(message string) error {
 	_, err := t.bot.Send(msg)
 	if err != nil {
 		return fmt.Errorf("telegram send: %w", err)
+	}
+	return nil
+}
+
+func (t *TelegramBot) sendSilentMessage(message string) error {
+	if t.sendMessageFn != nil {
+		return t.sendMessageFn(message)
+	}
+	if t.bot == nil {
+		return ErrNotifierNotRunning
+	}
+
+	msg := tgbotapi.NewMessage(t.allowedChatID, message)
+	msg.ParseMode = tgbotapi.ModeMarkdownV2
+	msg.DisableNotification = true
+
+	_, err := t.bot.Send(msg)
+	if err != nil {
+		return fmt.Errorf("telegram send silent: %w", err)
 	}
 	return nil
 }

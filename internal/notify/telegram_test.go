@@ -46,6 +46,9 @@ func TestNoopNotifier(t *testing.T) {
 	if err := n.NotifyBudgetWarning(ctx, "c", 80); err != nil {
 		t.Fatalf("NotifyBudgetWarning() error = %v", err)
 	}
+	if err := n.NotifyProgress(ctx, "p", "s", "d"); err != nil {
+		t.Fatalf("NotifyProgress() error = %v", err)
+	}
 	if err := n.Stop(); err != nil {
 		t.Fatalf("Stop() error = %v", err)
 	}
@@ -860,5 +863,111 @@ func TestEnqueueMessageClosedOutbox(t *testing.T) {
 	err := bot.enqueueMessage(context.Background(), "hola")
 	if !errors.Is(err, ErrNotifierNotRunning) {
 		t.Fatalf("expected ErrNotifierNotRunning, got %v", err)
+	}
+}
+
+func TestNotifyProgressSendsFormattedMessage(t *testing.T) {
+	t.Parallel()
+	var sent []string
+	var mu sync.Mutex
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.started.Store(true)
+	bot.sendMessageFn = func(text string) error {
+		mu.Lock()
+		sent = append(sent, text)
+		mu.Unlock()
+		return nil
+	}
+
+	if err := bot.NotifyProgress(context.Background(), "flux", "worker-started", "branch: feature/foo"); err != nil {
+		t.Fatalf("NotifyProgress() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(sent))
+	}
+	if !strings.Contains(sent[0], "flux") || !strings.Contains(sent[0], "worker\\-started") {
+		t.Fatalf("unexpected message: %q", sent[0])
+	}
+}
+
+func TestNotifyProgressRateLimitsPerProjectStage(t *testing.T) {
+	t.Parallel()
+	var sent int
+	var mu sync.Mutex
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	bot := newTestBot(newMockStore(now))
+	bot.started.Store(true)
+	bot.nowFn = func() time.Time { return now }
+	bot.sendMessageFn = func(text string) error {
+		mu.Lock()
+		sent++
+		mu.Unlock()
+		return nil
+	}
+
+	ctx := context.Background()
+
+	// First call goes through
+	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail1")
+	// Same project+stage within 5s — dropped
+	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail2")
+	// Different stage — goes through
+	_ = bot.NotifyProgress(ctx, "flux", "codex-executing", "~3min")
+	// Different project — goes through
+	_ = bot.NotifyProgress(ctx, "nhi", "worker-started", "detail3")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sent != 3 {
+		t.Fatalf("expected 3 messages (rate-limited 1), got %d", sent)
+	}
+}
+
+func TestNotifyProgressAllowsAfterCooldown(t *testing.T) {
+	t.Parallel()
+	var sent int
+	var mu sync.Mutex
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	bot := newTestBot(newMockStore(now))
+	bot.started.Store(true)
+	bot.nowFn = func() time.Time { return now }
+	bot.sendMessageFn = func(text string) error {
+		mu.Lock()
+		sent++
+		mu.Unlock()
+		return nil
+	}
+
+	ctx := context.Background()
+	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail1")
+
+	// Advance time past cooldown
+	now = now.Add(6 * time.Second)
+	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail2")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if sent != 2 {
+		t.Fatalf("expected 2 messages after cooldown, got %d", sent)
+	}
+}
+
+func TestNotifyProgressNilBot(t *testing.T) {
+	t.Parallel()
+	var bot *TelegramBot
+	if err := bot.NotifyProgress(context.Background(), "flux", "stage", "detail"); err != nil {
+		t.Fatalf("expected nil error for nil bot, got %v", err)
+	}
+}
+
+func TestNotifyProgressNotStarted(t *testing.T) {
+	t.Parallel()
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	// bot.started is false by default
+	if err := bot.NotifyProgress(context.Background(), "flux", "stage", "detail"); err != nil {
+		t.Fatalf("expected nil error for not-started bot, got %v", err)
 	}
 }

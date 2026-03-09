@@ -15,6 +15,7 @@ type Notifier interface {
 	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
 	NotifyConsultantUsed(ctx context.Context, consultantName, question, summary string) error
 	NotifyBudgetWarning(ctx context.Context, consultantName string, percentUsed float64) error
+	NotifyProgress(ctx context.Context, project, stage, detail string) error
 }
 
 type NoopNotifier struct{}
@@ -72,6 +73,14 @@ func (n NoopNotifier) NotifyBudgetWarning(ctx context.Context, consultantName st
 	_ = ctx
 	_ = consultantName
 	_ = percentUsed
+	return nil
+}
+
+func (n NoopNotifier) NotifyProgress(ctx context.Context, project, stage, detail string) error {
+	_ = ctx
+	_ = project
+	_ = stage
+	_ = detail
 	return nil
 }
 
