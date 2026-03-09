@@ -363,6 +363,9 @@ func (h *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, task := range detail.Tasks {
+		if task.Status == state.TaskStatusRejected {
+			continue
+		}
 		resp.Tasks = append(resp.Tasks, taskResponse{
 			ID:               task.ID,
 			ProjectID:        detail.ProjectRef,

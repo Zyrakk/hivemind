@@ -1113,7 +1113,12 @@ func buildProgress(tasks []Task) Progress {
 
 	workstreams := make([]WorkstreamProgress, 0, len(tasks))
 	completed := 0
+	active := 0
 	for _, task := range tasks {
+		if task.Status == TaskStatusRejected {
+			continue
+		}
+		active++
 		if task.Status == TaskStatusCompleted {
 			completed++
 		}
@@ -1129,8 +1134,13 @@ func buildProgress(tasks []Task) Progress {
 		})
 	}
 
+	var overall float64
+	if active > 0 {
+		overall = float64(completed) / float64(active)
+	}
+
 	return Progress{
-		Overall:     float64(completed) / float64(len(tasks)),
+		Overall:     overall,
 		Workstreams: workstreams,
 	}
 }
