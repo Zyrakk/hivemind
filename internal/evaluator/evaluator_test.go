@@ -603,7 +603,7 @@ func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _ string, _ []chec
 	return nil
 }
 
-func (m *mockNotifier) NotifyProgress(_ context.Context, _, _, _ string) error {
+func (m *mockNotifier) NotifyProgress(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 

@@ -935,9 +935,10 @@ func (m *mockPlannerNotifier) NotifyTaskCompleted(ctx context.Context, projectID
 	return nil
 }
 
-func (m *mockPlannerNotifier) NotifyProgress(ctx context.Context, project, stage, detail string) error {
+func (m *mockPlannerNotifier) NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error {
 	_ = ctx
 	_ = project
+	_ = taskID
 	_ = stage
 	_ = detail
 	return nil
