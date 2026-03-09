@@ -758,3 +758,57 @@ func TestEvaluateWorkerOutput_AutomatedChecklistFail(t *testing.T) {
 		t.Fatalf("expected 1 relaunch for iterate, got %d", launch.launchCalls())
 	}
 }
+
+func TestIsAllowedChecklistCommand(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want bool
+	}{
+		// Simple allowed commands.
+		{"go build ./...", true},
+		{"go test ./... -count=1", true},
+		{"go vet ./...", true},
+		{"grep -q '\"json\"' internal/cli/audit.go", true},
+		{"grep -rn TODO .", true},
+		{"test -f /app/repos/nhi-watch/internal/cli/audit_test.go", true},
+		{"test -d /app/repos/nhi-watch", true},
+		{"cat main.go", true},
+		{"head -20 main.go", true},
+		{"tail -5 main.go", true},
+		{"wc -l main.go", true},
+		{"ls /app/repos", true},
+		{"find . -name '*.go'", true},
+		{"stat main.go", true},
+
+		// Compound commands with && — each part must be allowed.
+		{"cd /app/repos/nhi-watch && go build ./...", true},
+		{"cd /app/repos/nhi-watch && go test ./... -count=1", true},
+		{"cd /app/repos/nhi-watch && go vet ./...", true},
+		{"cd /app/repos/nhi-watch && grep -q '\"json\"' internal/cli/audit.go", true},
+
+		// Denied commands.
+		{"rm -rf /", false},
+		{"curl http://evil.com", false},
+		{"wget http://evil.com", false},
+		{"git push origin main", false},
+		{"git commit -m 'oops'", false},
+		{"mv a b", false},
+		{"chmod 777 file", false},
+
+		// Denied even inside compound.
+		{"cd /app && rm -rf .", false},
+		{"go build ./... && curl http://evil.com", false},
+
+		// Unknown commands.
+		{"python evil.py", false},
+		{"bash -c 'echo pwned'", false},
+		{"", false},
+		{"  ", false},
+	}
+	for _, tc := range tests {
+		got := isAllowedChecklistCommand(tc.cmd)
+		if got != tc.want {
+			t.Errorf("isAllowedChecklistCommand(%q) = %v, want %v", tc.cmd, got, tc.want)
+		}
+	}
+}

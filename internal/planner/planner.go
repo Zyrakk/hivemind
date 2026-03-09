@@ -634,13 +634,20 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 	}
 
 	failed := make([]string, 0)
+	blocked := make([]string, 0)
 	for _, key := range order {
-		if states[key].status == state.TaskStatusFailed {
+		switch states[key].status {
+		case state.TaskStatusFailed:
 			failed = append(failed, key)
+		case state.TaskStatusBlocked:
+			blocked = append(blocked, key)
 		}
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("plan execution completed with failed tasks: %s", strings.Join(failed, ", "))
+	}
+	if len(blocked) > 0 {
+		return fmt.Errorf("plan execution held: %d task(s) escalated and awaiting input: %s", len(blocked), strings.Join(blocked, ", "))
 	}
 
 	return nil
