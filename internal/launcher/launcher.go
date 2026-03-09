@@ -94,7 +94,7 @@ type LauncherConfig struct {
 }
 
 type progressNotifier interface {
-	NotifyProgress(ctx context.Context, project, stage, detail string) error
+	NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error
 }
 
 type Launcher struct {
@@ -284,8 +284,8 @@ func (l *Launcher) LaunchWorker(ctx context.Context, task Task, agentsMD string,
 	l.activeWorkers[sessionID] = worker
 	l.mu.Unlock()
 
-	l.notifyProgress(ctx, task.ProjectRef, "worker-started", "branch: "+branch)
-	l.notifyProgress(ctx, task.ProjectRef, "codex-executing", "~3min est.")
+	l.notifyProgress(ctx, task.ProjectRef, task.ID, "worker-started", "branch: "+branch)
+	l.notifyProgress(ctx, task.ProjectRef, task.ID, "codex-executing", "~3min est.")
 
 	session := &Session{
 		SessionID: sessionID,
@@ -367,14 +367,14 @@ func (l *Launcher) SetNotifier(n progressNotifier) {
 	l.notifier = n
 }
 
-func (l *Launcher) notifyProgress(ctx context.Context, projectRef, stage, detail string) {
+func (l *Launcher) notifyProgress(ctx context.Context, projectRef, taskID, stage, detail string) {
 	l.mu.Lock()
 	n := l.notifier
 	l.mu.Unlock()
 	if n == nil {
 		return
 	}
-	if err := n.NotifyProgress(ctx, projectRef, stage, detail); err != nil {
+	if err := n.NotifyProgress(ctx, projectRef, taskID, stage, detail); err != nil {
 		l.logger.Warn("progress notification failed",
 			slog.String("stage", stage),
 			slog.Any("error", err))

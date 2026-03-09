@@ -328,7 +328,7 @@ func (t *TelegramBot) NotifyBudgetWarning(ctx context.Context, consultantName st
 	return t.enqueueMessage(ctx, FormatBudgetWarningMessage(consultantName, percentUsed))
 }
 
-func (t *TelegramBot) NotifyProgress(ctx context.Context, project, stage, detail string) error {
+func (t *TelegramBot) NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error {
 	_ = ctx
 	if t == nil || !t.started.Load() {
 		return nil

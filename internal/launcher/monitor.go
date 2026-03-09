@@ -212,7 +212,7 @@ func (l *Launcher) finalizeWorker(worker *WorkerProcess) {
 
 	diff := strings.TrimSpace(l.collectWorkerDiff(worker.RepoDir, worker.Branch))
 	if status == state.WorkerStatusCompleted {
-		l.notifyProgress(context.Background(), worker.Task.ProjectRef, "worker-completed", "pushing to origin...")
+		l.notifyProgress(context.Background(), worker.Task.ProjectRef, worker.Task.ID, "worker-completed", "pushing to origin...")
 		if pushErr := l.pushWorkerBranch(context.Background(), worker.RepoDir, worker.Branch); pushErr != nil {
 			l.logger.Error(
 				"git push failed; preserving worker directory",
@@ -223,7 +223,7 @@ func (l *Launcher) finalizeWorker(worker *WorkerProcess) {
 			)
 			status = state.WorkerStatusFailed
 			errorMessage = fmt.Sprintf("git push branch %s failed: %v", worker.Branch, pushErr)
-			l.notifyProgress(context.Background(), worker.Task.ProjectRef, "push-failed", fmt.Sprintf("error: %v", pushErr))
+			l.notifyProgress(context.Background(), worker.Task.ProjectRef, worker.Task.ID, "push-failed", fmt.Sprintf("error: %v", pushErr))
 
 			if strings.TrimSpace(worker.WorkerDir) != "" {
 				l.logger.Error(
@@ -233,7 +233,7 @@ func (l *Launcher) finalizeWorker(worker *WorkerProcess) {
 				)
 			}
 		} else {
-			l.notifyProgress(context.Background(), worker.Task.ProjectRef, "push-successful", "evaluating output...")
+			l.notifyProgress(context.Background(), worker.Task.ProjectRef, worker.Task.ID, "push-successful", "evaluating output...")
 			if strings.TrimSpace(worker.WorkerDir) != "" {
 				if cleanupErr := os.RemoveAll(worker.WorkerDir); cleanupErr != nil {
 					l.logger.Warn(

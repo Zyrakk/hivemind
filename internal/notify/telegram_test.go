@@ -46,7 +46,7 @@ func TestNoopNotifier(t *testing.T) {
 	if err := n.NotifyBudgetWarning(ctx, "c", 80); err != nil {
 		t.Fatalf("NotifyBudgetWarning() error = %v", err)
 	}
-	if err := n.NotifyProgress(ctx, "p", "s", "d"); err != nil {
+	if err := n.NotifyProgress(ctx, "p", "", "s", "d"); err != nil {
 		t.Fatalf("NotifyProgress() error = %v", err)
 	}
 	if err := n.Stop(); err != nil {
@@ -878,7 +878,7 @@ func TestNotifyProgressSendsFormattedMessage(t *testing.T) {
 		return nil
 	}
 
-	if err := bot.NotifyProgress(context.Background(), "flux", "worker-started", "branch: feature/foo"); err != nil {
+	if err := bot.NotifyProgress(context.Background(), "flux", "", "worker-started", "branch: feature/foo"); err != nil {
 		t.Fatalf("NotifyProgress() error = %v", err)
 	}
 
@@ -910,13 +910,13 @@ func TestNotifyProgressRateLimitsPerProjectStage(t *testing.T) {
 	ctx := context.Background()
 
 	// First call goes through
-	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail1")
+	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail1")
 	// Same project+stage within 5s — dropped
-	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail2")
+	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail2")
 	// Different stage — goes through
-	_ = bot.NotifyProgress(ctx, "flux", "codex-executing", "~3min")
+	_ = bot.NotifyProgress(ctx, "flux", "", "codex-executing", "~3min")
 	// Different project — goes through
-	_ = bot.NotifyProgress(ctx, "nhi", "worker-started", "detail3")
+	_ = bot.NotifyProgress(ctx, "nhi", "", "worker-started", "detail3")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -941,11 +941,11 @@ func TestNotifyProgressAllowsAfterCooldown(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail1")
+	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail1")
 
 	// Advance time past cooldown
 	now = now.Add(6 * time.Second)
-	_ = bot.NotifyProgress(ctx, "flux", "worker-started", "detail2")
+	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail2")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -957,7 +957,7 @@ func TestNotifyProgressAllowsAfterCooldown(t *testing.T) {
 func TestNotifyProgressNilBot(t *testing.T) {
 	t.Parallel()
 	var bot *TelegramBot
-	if err := bot.NotifyProgress(context.Background(), "flux", "stage", "detail"); err != nil {
+	if err := bot.NotifyProgress(context.Background(), "flux", "", "stage", "detail"); err != nil {
 		t.Fatalf("expected nil error for nil bot, got %v", err)
 	}
 }
@@ -966,7 +966,7 @@ func TestNotifyProgressNotStarted(t *testing.T) {
 	t.Parallel()
 	bot := newTestBot(newMockStore(time.Now().UTC()))
 	// bot.started is false by default
-	if err := bot.NotifyProgress(context.Background(), "flux", "stage", "detail"); err != nil {
+	if err := bot.NotifyProgress(context.Background(), "flux", "", "stage", "detail"); err != nil {
 		t.Fatalf("expected nil error for not-started bot, got %v", err)
 	}
 }

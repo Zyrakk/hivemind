@@ -497,20 +497,20 @@ func waitForResult(t *testing.T, results <-chan Session, sessionID string, timeo
 
 type mockProgressNotifier struct {
 	mu       sync.Mutex
-	messages []struct{ project, stage, detail string }
+	messages []struct{ project, taskID, stage, detail string }
 }
 
-func (m *mockProgressNotifier) NotifyProgress(_ context.Context, project, stage, detail string) error {
+func (m *mockProgressNotifier) NotifyProgress(_ context.Context, project, taskID, stage, detail string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.messages = append(m.messages, struct{ project, stage, detail string }{project, stage, detail})
+	m.messages = append(m.messages, struct{ project, taskID, stage, detail string }{project, taskID, stage, detail})
 	return nil
 }
 
-func (m *mockProgressNotifier) getMessages() []struct{ project, stage, detail string } {
+func (m *mockProgressNotifier) getMessages() []struct{ project, taskID, stage, detail string } {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]struct{ project, stage, detail string }{}, m.messages...)
+	return append([]struct{ project, taskID, stage, detail string }{}, m.messages...)
 }
 
 func TestLauncherNotifyProgressCallsNotifier(t *testing.T) {
@@ -518,13 +518,13 @@ func TestLauncherNotifyProgressCallsNotifier(t *testing.T) {
 	l := NewWithStore(nil, LauncherConfig{DirectExecution: true})
 	l.SetNotifier(mock)
 
-	l.notifyProgress(context.Background(), "flux", "test-stage", "test-detail")
+	l.notifyProgress(context.Background(), "flux", "t1", "test-stage", "test-detail")
 
 	msgs := mock.getMessages()
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
-	if msgs[0].project != "flux" || msgs[0].stage != "test-stage" || msgs[0].detail != "test-detail" {
+	if msgs[0].project != "flux" || msgs[0].taskID != "t1" || msgs[0].stage != "test-stage" || msgs[0].detail != "test-detail" {
 		t.Fatalf("unexpected message: %+v", msgs[0])
 	}
 }
@@ -532,7 +532,7 @@ func TestLauncherNotifyProgressCallsNotifier(t *testing.T) {
 func TestLauncherNotifyProgressNilNotifier(t *testing.T) {
 	l := NewWithStore(nil, LauncherConfig{DirectExecution: true})
 	// Should not panic with nil notifier
-	l.notifyProgress(context.Background(), "flux", "test-stage", "detail")
+	l.notifyProgress(context.Background(), "flux", "t1", "test-stage", "detail")
 }
 
 func TestLauncherSetNotifierNilLauncher(t *testing.T) {

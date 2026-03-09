@@ -61,7 +61,7 @@ type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
 	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
 	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
-	NotifyProgress(ctx context.Context, project, stage, detail string) error
+	NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error
 }
 
 type PlanResult struct {
@@ -191,14 +191,14 @@ func (p *Planner) SetRecon(r plannerRecon) {
 	p.recon = r
 }
 
-func (p *Planner) notifyProgress(ctx context.Context, project, stage, detail string) {
+func (p *Planner) notifyProgress(ctx context.Context, project, taskID, stage, detail string) {
 	p.mu.Lock()
 	n := p.notifier
 	p.mu.Unlock()
 	if n == nil {
 		return
 	}
-	_ = n.NotifyProgress(ctx, project, stage, detail)
+	_ = n.NotifyProgress(ctx, project, taskID, stage, detail)
 }
 
 func (p *Planner) BuildPlan(ctx context.Context, directive, agentsMD string) (*llm.TaskPlan, error) {
@@ -395,7 +395,7 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 					if taskTitle == "" {
 						taskTitle = key
 					}
-					p.notifyProgress(ctx, plan.ProjectRef, "launching", fmt.Sprintf("task %d/%d: %s", indexOf(order, key)+1, len(order), taskTitle))
+					p.notifyProgress(ctx, plan.ProjectRef, s.task.Task.ID, "launching", fmt.Sprintf("task %d/%d: %s", indexOf(order, key)+1, len(order), taskTitle))
 					session, launchErr := p.launcher.LaunchWorker(ctx, launcher.Task{
 						ProjectID:     plan.ProjectID,
 						ProjectRef:    plan.ProjectRef,

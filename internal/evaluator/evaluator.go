@@ -85,7 +85,7 @@ type CompletionResult struct {
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
 	NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []checklist.CheckResult, userChecks []checklist.UserCheck) error
-	NotifyProgress(ctx context.Context, project, stage, detail string) error
+	NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error
 }
 
 type Evaluator struct {
@@ -187,14 +187,14 @@ func (e *Evaluator) hasAnyChecklists() bool {
 	return len(e.checklists) > 0
 }
 
-func (e *Evaluator) notifyProgress(ctx context.Context, project, stage, detail string) {
+func (e *Evaluator) notifyProgress(ctx context.Context, project, taskID, stage, detail string) {
 	e.mu.Lock()
 	n := e.notifier
 	e.mu.Unlock()
 	if n == nil {
 		return
 	}
-	_ = n.NotifyProgress(ctx, project, stage, detail)
+	_ = n.NotifyProgress(ctx, project, taskID, stage, detail)
 }
 
 // allowedChecklistPrefixes defines safe command prefixes for automated checklist commands.
@@ -296,7 +296,8 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 	if taskHasChecklists && len(checklists.AutomatedChecklist) > 0 {
 		evalDetail = fmt.Sprintf("%d checks to run", len(checklists.AutomatedChecklist))
 	}
-	e.notifyProgress(ctx, projectRef, "evaluating", evalDetail)
+	taskIDStr := strconv.FormatInt(taskRecord.ID, 10)
+	e.notifyProgress(ctx, projectRef, taskIDStr, "evaluating", evalDetail)
 
 	agentsMD, err := readProjectAgentsForEvaluation(session.ProjectID, projectName)
 	if err != nil {
@@ -472,7 +473,7 @@ postEval:
 	if action == "iterate" {
 		evalDoneDetail = fmt.Sprintf("iterate (retry %d)", retryCount+1)
 	}
-	e.notifyProgress(ctx, projectRef, "evaluation-done", evalDoneDetail)
+	e.notifyProgress(ctx, projectRef, strconv.FormatInt(taskID, 10), "evaluation-done", evalDoneDetail)
 
 	nextSessionID := ""
 	workerRef := optionalWorkerID(session.WorkerID)
