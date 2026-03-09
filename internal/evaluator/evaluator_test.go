@@ -602,6 +602,10 @@ func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _, _ string) error
 	return nil
 }
 
+func (m *mockNotifier) NotifyProgress(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 func TestEvaluateWorkerOutput_AutomatedChecklistAutoApprove(t *testing.T) {
 	store, projectID, taskID, workerID, cleanup := setupEvaluatorTestEnv(t)
 	defer cleanup()
