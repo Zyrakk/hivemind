@@ -536,3 +536,220 @@ func setupEvaluatorTestEnv(t *testing.T) (*state.Store, int64, int64, int64, fun
 		_ = store.Close()
 	}
 }
+
+// mockChecklistRecon is a configurable recon mock for checklist tests.
+// When failCommands is non-empty, any command containing one of those
+// substrings returns a result with Errors set, simulating a check failure.
+type mockChecklistRecon struct {
+	mu           sync.Mutex
+	commands     []string
+	failCommands []string // substrings that trigger failure
+}
+
+func (m *mockChecklistRecon) Run(_ context.Context, commands []string) (*recon.Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(commands) > 0 {
+		m.commands = append(m.commands, commands[0])
+	}
+
+	cmd := ""
+	if len(commands) > 0 {
+		cmd = commands[0]
+	}
+	for _, fail := range m.failCommands {
+		if strings.Contains(cmd, fail) {
+			return &recon.Result{
+				Output: "[error: exit 1]\nfailed",
+				Detail: map[string]string{},
+				Errors: []string{cmd},
+			}, nil
+		}
+	}
+
+	return &recon.Result{
+		Output: "ok",
+		Detail: map[string]string{},
+		Errors: []string{},
+	}, nil
+}
+
+func (m *mockChecklistRecon) calls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.commands)
+}
+
+// mockNotifier records notification calls.
+type mockNotifier struct {
+	mu              sync.Mutex
+	needsInputCalls int
+	prReadyCalls    int
+}
+
+func (m *mockNotifier) NotifyNeedsInput(_ context.Context, _, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.needsInputCalls++
+	return nil
+}
+
+func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _, _ string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prReadyCalls++
+	return nil
+}
+
+func TestEvaluateWorkerOutput_AutomatedChecklistAutoApprove(t *testing.T) {
+	store, projectID, taskID, workerID, cleanup := setupEvaluatorTestEnv(t)
+	defer cleanup()
+
+	reconMock := &mockChecklistRecon{}
+	launch := &mockEvaluatorLauncher{}
+
+	// Create evaluator with nil GLM and nil engine.
+	// The checklist path should handle evaluation without them.
+	eval := NewWithDeps(nil, nil, launch, store, nil)
+	eval.SetRecon(reconMock)
+
+	eval.SetTaskChecklists(taskID, TaskChecklists{
+		AutomatedChecklist: []AutomatedCheck{
+			{ID: "chk-1", Description: "build", Command: "go build ./...", Type: "build"},
+		},
+		UserChecklist: []UserCheck{}, // empty — no user review needed
+	})
+
+	result, err := eval.EvaluateWorkerOutput(context.Background(), launcher.Session{
+		SessionID: "session-checklist-auto",
+		ProjectID: projectID,
+		Branch:    "feature/task",
+		Status:    state.WorkerStatusCompleted,
+		WorkerID:  workerID,
+		Diff:      "diff --git a/file b/file",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWorkerOutput returned error: %v", err)
+	}
+	if result.Action != "accept" {
+		t.Fatalf("expected action accept, got %s", result.Action)
+	}
+	if result.Evaluation == nil {
+		t.Fatal("expected non-nil evaluation")
+	}
+	if !strings.Contains(strings.ToLower(result.Evaluation.Summary), "automated checks passed") {
+		t.Fatalf("expected summary to mention automated checks passed, got %q", result.Evaluation.Summary)
+	}
+	// Recon should have been called once for the single automated check
+	if reconMock.calls() != 1 {
+		t.Fatalf("expected 1 recon call, got %d", reconMock.calls())
+	}
+}
+
+func TestEvaluateWorkerOutput_AutomatedPassWithUserChecklist(t *testing.T) {
+	store, projectID, taskID, workerID, cleanup := setupEvaluatorTestEnv(t)
+	defer cleanup()
+
+	reconMock := &mockChecklistRecon{}
+	launch := &mockEvaluatorLauncher{}
+	notif := &mockNotifier{}
+
+	eval := NewWithDeps(nil, nil, launch, store, nil)
+	eval.SetRecon(reconMock)
+	eval.SetNotifier(notif)
+
+	eval.SetTaskChecklists(taskID, TaskChecklists{
+		AutomatedChecklist: []AutomatedCheck{
+			{ID: "chk-1", Description: "build", Command: "go build ./...", Type: "build"},
+		},
+		UserChecklist: []UserCheck{
+			{ID: "uchk-1", Description: "Verify UI renders correctly"},
+		},
+	})
+
+	result, err := eval.EvaluateWorkerOutput(context.Background(), launcher.Session{
+		SessionID: "session-checklist-user",
+		ProjectID: projectID,
+		Branch:    "feature/task",
+		Status:    state.WorkerStatusCompleted,
+		WorkerID:  workerID,
+		Diff:      "diff --git a/file b/file",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWorkerOutput returned error: %v", err)
+	}
+	if result.Action != "accept" {
+		t.Fatalf("expected action accept, got %s", result.Action)
+	}
+	if result.Evaluation == nil {
+		t.Fatal("expected non-nil evaluation")
+	}
+	if !strings.Contains(result.Evaluation.Summary, "User checklist sent for review") {
+		t.Fatalf("expected summary to mention user checklist sent for review, got %q", result.Evaluation.Summary)
+	}
+	// Notifier should have been called to send user checklist
+	notif.mu.Lock()
+	needsInput := notif.needsInputCalls
+	notif.mu.Unlock()
+	if needsInput != 1 {
+		t.Fatalf("expected 1 NotifyNeedsInput call for user checklist, got %d", needsInput)
+	}
+}
+
+func TestEvaluateWorkerOutput_AutomatedChecklistFail(t *testing.T) {
+	store, projectID, taskID, workerID, cleanup := setupEvaluatorTestEnv(t)
+	defer cleanup()
+
+	reconMock := &mockChecklistRecon{
+		failCommands: []string{"go build"}, // make build fail
+	}
+	launch := &mockEvaluatorLauncher{}
+
+	eval := NewWithDeps(nil, nil, launch, store, nil)
+	eval.SetRecon(reconMock)
+
+	eval.SetTaskChecklists(taskID, TaskChecklists{
+		AutomatedChecklist: []AutomatedCheck{
+			{ID: "chk-1", Description: "build", Command: "go build ./...", Type: "build"},
+		},
+		UserChecklist: []UserCheck{},
+	})
+
+	result, err := eval.EvaluateWorkerOutput(context.Background(), launcher.Session{
+		SessionID: "session-checklist-fail",
+		ProjectID: projectID,
+		Branch:    "feature/task",
+		Status:    state.WorkerStatusCompleted,
+		WorkerID:  workerID,
+		Diff:      "diff --git a/file b/file",
+	})
+	if err != nil {
+		t.Fatalf("EvaluateWorkerOutput returned error: %v", err)
+	}
+	// retryCount starts at 0, which is < 2, so action should be "iterate"
+	if result.Action != "iterate" {
+		t.Fatalf("expected action iterate, got %s", result.Action)
+	}
+	if result.Evaluation == nil {
+		t.Fatal("expected non-nil evaluation")
+	}
+	if len(result.Evaluation.Issues) == 0 {
+		t.Fatal("expected at least one issue for the failed check")
+	}
+	// Verify the issue describes the failure
+	foundFailure := false
+	for _, issue := range result.Evaluation.Issues {
+		if strings.Contains(issue.Description, "chk-1") || strings.Contains(issue.Description, "build") {
+			foundFailure = true
+			break
+		}
+	}
+	if !foundFailure {
+		t.Fatalf("expected issue referencing the failed check, got %v", result.Evaluation.Issues)
+	}
+	// A relaunch should have happened for the iterate action
+	if launch.launchCalls() != 1 {
+		t.Fatalf("expected 1 relaunch for iterate, got %d", launch.launchCalls())
+	}
+}
