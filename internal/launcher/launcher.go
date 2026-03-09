@@ -362,14 +362,19 @@ func (l *Launcher) SetNotifier(n progressNotifier) {
 	if l == nil {
 		return
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.notifier = n
 }
 
 func (l *Launcher) notifyProgress(ctx context.Context, projectRef, stage, detail string) {
-	if l.notifier == nil {
+	l.mu.Lock()
+	n := l.notifier
+	l.mu.Unlock()
+	if n == nil {
 		return
 	}
-	if err := l.notifier.NotifyProgress(ctx, projectRef, stage, detail); err != nil {
+	if err := n.NotifyProgress(ctx, projectRef, stage, detail); err != nil {
 		l.logger.Warn("progress notification failed",
 			slog.String("stage", stage),
 			slog.Any("error", err))
