@@ -179,6 +179,12 @@ func (e *Evaluator) getTaskChecklists(taskID int64) (TaskChecklists, bool) {
 	return cl, ok
 }
 
+func (e *Evaluator) hasAnyChecklists() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.checklists) > 0
+}
+
 func (e *Evaluator) evaluateWithChecklist(ctx context.Context, checklists TaskChecklists, repoPath string) ([]checkResult, error) {
 	if e.recon == nil {
 		return nil, fmt.Errorf("recon not configured for checklist evaluation")
@@ -228,7 +234,8 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 	eng := e.engine
 	rc := e.recon
 	e.mu.Unlock()
-	if eng == nil && e.glm == nil {
+	hasChecklists := e.hasAnyChecklists()
+	if eng == nil && e.glm == nil && !hasChecklists {
 		return nil, fmt.Errorf("glm client is not configured")
 	}
 
