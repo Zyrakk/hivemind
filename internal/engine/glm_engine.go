@@ -233,9 +233,10 @@ func firstSentence(text string) string {
 			}
 		}
 	}
-	// No sentence boundary found, truncate at 200 chars
-	if len(text) > 200 {
-		return text[:200] + "..."
+	// No sentence boundary found, truncate at 200 runes
+	runes := []rune(text)
+	if len(runes) > 200 {
+		return string(runes[:200]) + "..."
 	}
 	return text
 }
