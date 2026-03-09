@@ -27,6 +27,7 @@ var (
 
 type Task struct {
 	ProjectID     int64
+	ProjectRef    string
 	ID            string
 	Title         string
 	Description   string
@@ -92,6 +93,10 @@ type LauncherConfig struct {
 	Logger          *slog.Logger
 }
 
+type progressNotifier interface {
+	NotifyProgress(ctx context.Context, project, stage, detail string) error
+}
+
 type Launcher struct {
 	db            *state.Store
 	config        LauncherConfig
@@ -101,6 +106,7 @@ type Launcher struct {
 	logger        *slog.Logger
 	finishedCh    chan Session
 	nowFn         func() time.Time
+	notifier      progressNotifier
 }
 
 func New(binaryPath string, timeout time.Duration) *Launcher {
@@ -278,6 +284,9 @@ func (l *Launcher) LaunchWorker(ctx context.Context, task Task, agentsMD string,
 	l.activeWorkers[sessionID] = worker
 	l.mu.Unlock()
 
+	l.notifyProgress(ctx, task.ProjectRef, "worker-started", "branch: "+branch)
+	l.notifyProgress(ctx, task.ProjectRef, "codex-executing", "~3min est.")
+
 	session := &Session{
 		SessionID: sessionID,
 		ProjectID: task.ProjectID,
@@ -347,6 +356,24 @@ func (l *Launcher) GetSession(sessionID string) (Session, bool) {
 
 func (l *Launcher) GetWorkDir() string {
 	return l.config.WorkDir
+}
+
+func (l *Launcher) SetNotifier(n progressNotifier) {
+	if l == nil {
+		return
+	}
+	l.notifier = n
+}
+
+func (l *Launcher) notifyProgress(ctx context.Context, projectRef, stage, detail string) {
+	if l.notifier == nil {
+		return
+	}
+	if err := l.notifier.NotifyProgress(ctx, projectRef, stage, detail); err != nil {
+		l.logger.Warn("progress notification failed",
+			slog.String("stage", stage),
+			slog.Any("error", err))
+	}
 }
 
 func (l *Launcher) prepareWorkerRepo(ctx context.Context, task Task, sessionID, branch string) (string, string, error) {
