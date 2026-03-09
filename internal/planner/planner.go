@@ -61,6 +61,7 @@ type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
 	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
 	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
+	NotifyProgress(ctx context.Context, project, stage, detail string) error
 }
 
 type PlanResult struct {
@@ -188,6 +189,16 @@ func (p *Planner) SetRecon(r plannerRecon) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.recon = r
+}
+
+func (p *Planner) notifyProgress(ctx context.Context, project, stage, detail string) {
+	p.mu.Lock()
+	n := p.notifier
+	p.mu.Unlock()
+	if n == nil {
+		return
+	}
+	_ = n.NotifyProgress(ctx, project, stage, detail)
 }
 
 func (p *Planner) BuildPlan(ctx context.Context, directive, agentsMD string) (*llm.TaskPlan, error) {
@@ -380,8 +391,14 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
+					taskTitle := strings.TrimSpace(s.task.Task.Title)
+					if taskTitle == "" {
+						taskTitle = key
+					}
+					p.notifyProgress(ctx, plan.ProjectRef, "launching", fmt.Sprintf("task %d/%d: %s", indexOf(order, key)+1, len(order), taskTitle))
 					session, launchErr := p.launcher.LaunchWorker(ctx, launcher.Task{
 						ProjectID:     plan.ProjectID,
+						ProjectRef:    plan.ProjectRef,
 						ID:            s.task.Task.ID,
 						Title:         s.task.Task.Title,
 						Description:   effectiveWorkerPrompt(s.task.Task),
@@ -1383,4 +1400,13 @@ func normalizePlanEngineName(name string) string {
 
 func generatePlanID() string {
 	return fmt.Sprintf("plan-%d", time.Now().UnixNano())
+}
+
+func indexOf(slice []string, item string) int {
+	for i, v := range slice {
+		if v == item {
+			return i
+		}
+	}
+	return 0
 }
