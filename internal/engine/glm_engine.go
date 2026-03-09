@@ -140,15 +140,19 @@ func convertGLMPlan(plan *llm.TaskPlan) (*PlanResult, error) {
 
 	tasks := make([]PlanTask, 0, len(plan.Tasks))
 	for idx, task := range plan.Tasks {
+		desc := strings.TrimSpace(task.Description)
+		briefing := firstSentence(desc)
 		tasks = append(tasks, PlanTask{
-			ID:           task.ID,
-			Title:        task.Title,
-			Description:  task.Description,
-			BranchName:   task.BranchName,
-			Dependencies: append([]string(nil), task.DependsOn...),
-			Priority:     idx,
-			Type:         "coding",
-			Prompt:       task.Description,
+			ID:              task.ID,
+			Title:           task.Title,
+			Description:     desc,
+			BranchName:      task.BranchName,
+			Dependencies:    append([]string(nil), task.DependsOn...),
+			Priority:        idx,
+			Type:            "coding",
+			Prompt:          desc,
+			Briefing:        briefing,
+			ExecutionPrompt: desc,
 		})
 	}
 
@@ -212,6 +216,28 @@ func mapGLMVerdict(verdict string) string {
 	default:
 		return "escalate"
 	}
+}
+
+func firstSentence(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for i, r := range text {
+		if r == '.' || r == '!' || r == '?' {
+			if i+1 < len(text) && (text[i+1] == ' ' || text[i+1] == '\n') {
+				return text[:i+1]
+			}
+			if i+1 == len(text) {
+				return text
+			}
+		}
+	}
+	// No sentence boundary found, truncate at 200 chars
+	if len(text) > 200 {
+		return text[:200] + "..."
+	}
+	return text
 }
 
 func truncateForSummary(text string, maxChars int) string {
