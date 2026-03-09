@@ -338,6 +338,54 @@ func FormatQuotaAlertMessage(dailyUsed, dailyLimit, weeklyUsed, weeklyLimit int)
 	return codeBlock(box.String())
 }
 
+// ProgressEntry represents a single stage in the progress timeline.
+type ProgressEntry struct {
+	Stage  string
+	Detail string
+	Status string // "done", "active", "failed"
+	Time   time.Time
+}
+
+// ProgressTimeline tracks the full progress state for a single task.
+type ProgressTimeline struct {
+	Project string
+	Title   string
+	Branch  string
+	Entries []ProgressEntry
+}
+
+// RenderProgressTimeline renders a box-drawing timeline as a code block.
+func RenderProgressTimeline(tl *ProgressTimeline) string {
+	if tl == nil {
+		return ""
+	}
+
+	var box strings.Builder
+	box.WriteString(fmt.Sprintf("┌─ %s ────────────────────\n", tl.Project))
+	box.WriteString(fmt.Sprintf("│ %s\n", tl.Title))
+	if tl.Branch != "" {
+		box.WriteString(fmt.Sprintf("│ branch: %s\n", tl.Branch))
+	}
+	box.WriteString("├────────────────────────────\n")
+	for _, entry := range tl.Entries {
+		icon := "▸"
+		switch entry.Status {
+		case "done":
+			icon = "✓"
+		case "failed":
+			icon = "✗"
+		}
+		line := fmt.Sprintf("│ %s %s", icon, entry.Stage)
+		if entry.Detail != "" {
+			line += fmt.Sprintf(" (%s)", entry.Detail)
+		}
+		box.WriteString(line + "\n")
+	}
+	box.WriteString("└────────────────────────────")
+
+	return codeBlock(box.String())
+}
+
 func formatEscapedLines(lines ...string) string {
 	escaped := make([]string, 0, len(lines))
 	for _, line := range lines {

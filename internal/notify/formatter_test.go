@@ -249,6 +249,86 @@ func TestFormatQuotaAlertMessage(t *testing.T) {
 	}
 }
 
+func TestRenderProgressTimeline_SingleActive(t *testing.T) {
+	tl := &ProgressTimeline{
+		Project: "nhi-watch",
+		Title:   "Add --dry-run flag to audit",
+		Entries: []ProgressEntry{
+			{Stage: "launching", Detail: "task 1/1", Status: "active", Time: time.Now()},
+		},
+	}
+	got := RenderProgressTimeline(tl)
+	if !strings.Contains(got, "nhi-watch") {
+		t.Fatalf("expected project name, got %q", got)
+	}
+	if !strings.Contains(got, "▸ launching") {
+		t.Fatalf("expected active marker, got %q", got)
+	}
+	if !strings.Contains(got, "Add --dry-run flag") {
+		t.Fatalf("expected title, got %q", got)
+	}
+}
+
+func TestRenderProgressTimeline_MixedStatuses(t *testing.T) {
+	tl := &ProgressTimeline{
+		Project: "nhi-watch",
+		Title:   "Add dry-run flag",
+		Branch:  "feature/audit-dry-run",
+		Entries: []ProgressEntry{
+			{Stage: "launched", Status: "done"},
+			{Stage: "worker started", Status: "done"},
+			{Stage: "codex completed", Detail: "2m 31s", Status: "done"},
+			{Stage: "pushed to origin", Status: "done"},
+			{Stage: "evaluating", Detail: "7 checks", Status: "active"},
+		},
+	}
+	got := RenderProgressTimeline(tl)
+	if count := strings.Count(got, "✓"); count != 4 {
+		t.Fatalf("expected 4 done markers, got %d in %q", count, got)
+	}
+	if !strings.Contains(got, "▸ evaluating") {
+		t.Fatalf("expected active evaluating, got %q", got)
+	}
+	if !strings.Contains(got, "feature/audit-dry-run") {
+		t.Fatalf("expected branch, got %q", got)
+	}
+}
+
+func TestRenderProgressTimeline_FailedEntry(t *testing.T) {
+	tl := &ProgressTimeline{
+		Project: "nhi-watch",
+		Title:   "Add dry-run flag",
+		Entries: []ProgressEntry{
+			{Stage: "launched", Status: "done"},
+			{Stage: "evaluation", Detail: "5/7 checks passed", Status: "failed"},
+			{Stage: "retry 2/3 launching", Status: "active"},
+		},
+	}
+	got := RenderProgressTimeline(tl)
+	if !strings.Contains(got, "✗ evaluation") {
+		t.Fatalf("expected failed marker, got %q", got)
+	}
+}
+
+func TestRenderProgressTimeline_CodeBlock(t *testing.T) {
+	tl := &ProgressTimeline{
+		Project: "flux",
+		Title:   "test",
+		Entries: []ProgressEntry{{Stage: "launching", Status: "active"}},
+	}
+	got := RenderProgressTimeline(tl)
+	if !strings.HasPrefix(got, "```\n") || !strings.HasSuffix(got, "\n```") {
+		t.Fatalf("expected code block wrapping, got %q", got)
+	}
+}
+
+func TestRenderProgressTimeline_Nil(t *testing.T) {
+	got := RenderProgressTimeline(nil)
+	if got != "" {
+		t.Fatalf("expected empty for nil, got %q", got)
+	}
+}
+
 func TestFormatPRReadyWithUserChecks(t *testing.T) {
 	msg := FormatPRReadyMessage("Flux", "feat/x", "pr-1",
 		[]CheckResult{
