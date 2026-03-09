@@ -254,7 +254,7 @@ func TestRenderProgressTimeline_SingleActive(t *testing.T) {
 		Project: "nhi-watch",
 		Title:   "Add --dry-run flag to audit",
 		Entries: []ProgressEntry{
-			{Stage: "launching", Detail: "task 1/1", Status: "active", Time: time.Now()},
+			{Stage: "launching", Detail: "task 1/1", Status: ProgressStatusActive, Time: time.Now()},
 		},
 	}
 	got := RenderProgressTimeline(tl)
@@ -275,11 +275,11 @@ func TestRenderProgressTimeline_MixedStatuses(t *testing.T) {
 		Title:   "Add dry-run flag",
 		Branch:  "feature/audit-dry-run",
 		Entries: []ProgressEntry{
-			{Stage: "launched", Status: "done"},
-			{Stage: "worker started", Status: "done"},
-			{Stage: "codex completed", Detail: "2m 31s", Status: "done"},
-			{Stage: "pushed to origin", Status: "done"},
-			{Stage: "evaluating", Detail: "7 checks", Status: "active"},
+			{Stage: "launched", Status: ProgressStatusDone},
+			{Stage: "worker started", Status: ProgressStatusDone},
+			{Stage: "codex completed", Detail: "2m 31s", Status: ProgressStatusDone},
+			{Stage: "pushed to origin", Status: ProgressStatusDone},
+			{Stage: "evaluating", Detail: "7 checks", Status: ProgressStatusActive},
 		},
 	}
 	got := RenderProgressTimeline(tl)
@@ -299,9 +299,9 @@ func TestRenderProgressTimeline_FailedEntry(t *testing.T) {
 		Project: "nhi-watch",
 		Title:   "Add dry-run flag",
 		Entries: []ProgressEntry{
-			{Stage: "launched", Status: "done"},
-			{Stage: "evaluation", Detail: "5/7 checks passed", Status: "failed"},
-			{Stage: "retry 2/3 launching", Status: "active"},
+			{Stage: "launched", Status: ProgressStatusDone},
+			{Stage: "evaluation", Detail: "5/7 checks passed", Status: ProgressStatusFailed},
+			{Stage: "retry 2/3 launching", Status: ProgressStatusActive},
 		},
 	}
 	got := RenderProgressTimeline(tl)
@@ -314,7 +314,7 @@ func TestRenderProgressTimeline_CodeBlock(t *testing.T) {
 	tl := &ProgressTimeline{
 		Project: "flux",
 		Title:   "test",
-		Entries: []ProgressEntry{{Stage: "launching", Status: "active"}},
+		Entries: []ProgressEntry{{Stage: "launching", Status: ProgressStatusActive}},
 	}
 	got := RenderProgressTimeline(tl)
 	if !strings.HasPrefix(got, "```\n") || !strings.HasSuffix(got, "\n```") {
