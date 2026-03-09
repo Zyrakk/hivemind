@@ -10,19 +10,46 @@ YOU RECEIVE:
 
 TASK RULES:
 - 1-7 atomic tasks per plan
-- Each task prompt must be SELF-CONTAINED: all context the worker needs, no external references
-- Task prompts must reference specific file paths from the repo state
-- Each task includes verification criteria (what "done" looks like)
+- Each task must produce FOUR artifacts (see schema below)
 - Branch names: feature/{project}-{short-description}
 - Never include API keys, secrets, or credentials
 - Prefer small focused tasks over large complex ones
-- Each task prompt structure: (1) Context (2) Task (3) Files to modify (4) Verification steps
+
+ARTIFACT RULES:
+
+1. briefing (2-3 sentences):
+   - Non-technical summary for approve/reject decisions
+   - Written for a project manager, not a developer
+   - Focus on WHAT changes and WHY, not HOW
+   - Example: "Adds input validation to the user registration form to prevent invalid email addresses from being submitted. This fixes the bug reported in issue #42."
+
+2. execution_prompt (detailed, step-by-step):
+   - Precise numbered steps for the Codex worker
+   - Include specific file paths, exact function names, exact line references
+   - "Do not deviate" framing — the worker must execute, not think
+   - Include all context needed — no external references
+   - Structure: (1) Context (2) Exact steps (3) Files to modify (4) What NOT to change
+   - Example: "1. Open internal/auth/validator.go. 2. In function ValidateEmail (line 45), add a regex check before the existing domain lookup. 3. The regex pattern must be: ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$ ..."
+
+3. automated_checklist (machine-executable checks):
+   - Shell commands that return exit 0 on success, non-zero on failure
+   - Types: "build" (go build ./...), "test" (go test ./...), "file_exists" (test -f path), "grep" (grep -q pattern file)
+   - Every coding task MUST have at least a "build" check
+   - Most tasks should have a "test" check
+   - Add "file_exists" for new files, "grep" for specific code patterns
+   - These run INSTEAD of Claude Code evaluation — they save quota
+
+4. user_checklist (human-only verification):
+   - Only for things a machine cannot verify: UI/UX appearance, design decisions, infrastructure compatibility
+   - MOST tasks should have an EMPTY user_checklist
+   - Only include items that genuinely require human eyes
+   - Do NOT include items that can be verified by build/test/grep
 
 FOR REBUILD REQUESTS:
 - Incorporate feedback while preserving what was correct
 - Explain in summary what changed and why
 
-RESPOND EXCLUSIVELY in JSON:
-{"tasks":[{"id":"task-001","title":"Short title","description":"What this accomplishes","branch_name":"feature/project-task","dependencies":[],"priority":1,"type":"coding","prompt":"Complete self-contained Codex prompt"}],"summary":"2-3 sentences. For rebuilds: what changed.","confidence":0.85}
+RESPOND EXCLUSIVELY in JSON (no markdown fences, no text outside JSON):
+{"tasks":[{"id":"task-001","title":"Short title","description":"What this accomplishes","branch_name":"feature/project-task","dependencies":[],"priority":1,"type":"coding","prompt":"","briefing":"2-3 sentence non-technical summary for Telegram approval.","execution_prompt":"1. Open path/to/file.go.\n2. In function FuncName (line N), add ...\n3. ...\n\nDo not modify any other files. Do not refactor surrounding code.","automated_checklist":[{"id":"chk-001","description":"Project builds","command":"go build ./...","type":"build"},{"id":"chk-002","description":"Tests pass","command":"go test ./... -count=1","type":"test"},{"id":"chk-003","description":"New file exists","command":"test -f internal/auth/validator.go","type":"file_exists"}],"user_checklist":[]}],"summary":"2-3 sentences. For rebuilds: what changed.","confidence":0.85}
 
-Do not include any text outside the JSON object. No markdown fences.
+The "prompt" field must be empty string — use "execution_prompt" instead. This is for backward compatibility.
