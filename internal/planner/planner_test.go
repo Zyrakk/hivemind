@@ -967,6 +967,55 @@ func (m *mockPlannerLauncher) launchOrder() []string {
 	return append([]string(nil), m.launched...)
 }
 
+// mockEscalatingEvaluator always returns "escalate" — simulates all checks failing.
+type mockEscalatingEvaluator struct{}
+
+func (m *mockEscalatingEvaluator) EvaluateWorkerOutput(_ context.Context, _ launcher.Session) (*evaluator.EvalResult, error) {
+	return &evaluator.EvalResult{
+		Action:  "escalate",
+		Verdict: "escalate",
+	}, nil
+}
+
+func (m *mockEscalatingEvaluator) HandleWorkerCompletionDetailed(_ context.Context, _ string) (*evaluator.CompletionResult, error) {
+	return &evaluator.CompletionResult{Action: "escalate"}, nil
+}
+
+func (m *mockEscalatingEvaluator) SetTaskChecklists(_ int64, _ evaluator.TaskChecklists) {}
+
+func TestExecutePlanEscalatedTasksReturnError(t *testing.T) {
+	store, cleanup := setupPlannerTestEnv(t)
+	defer cleanup()
+
+	glm := &mockPlannerGLM{
+		plans: []*llm.TaskPlan{
+			{
+				Confidence: 0.9,
+				Tasks:      []llm.Task{{ID: "task-1", Title: "Build", Description: "build it", BranchName: "build"}},
+			},
+		},
+	}
+
+	launch := newMockPlannerLauncher(true)
+	launch.completionStatus = state.WorkerStatusCompleted
+
+	planner := NewWithDeps(glm, nil, launch, store, "prompts", nil)
+	planner.SetEvaluator(&mockEscalatingEvaluator{})
+
+	planResult, err := planner.CreatePlan(context.Background(), "Build project", "flux")
+	if err != nil {
+		t.Fatalf("CreatePlan returned error: %v", err)
+	}
+
+	err = planner.ExecutePlan(context.Background(), planResult.PlanID)
+	if err == nil {
+		t.Fatal("expected ExecutePlan to return error for escalated/blocked tasks, got nil")
+	}
+	if !strings.Contains(err.Error(), "held") && !strings.Contains(err.Error(), "escalated") {
+		t.Fatalf("expected error about held/escalated tasks, got: %v", err)
+	}
+}
+
 func setupPlannerTestEnv(t *testing.T) (*state.Store, func()) {
 	t.Helper()
 
