@@ -5,6 +5,7 @@ type CheckResult struct {
 	Description string
 	Command     string
 	Passed      bool
+	Skipped     bool
 	Output      string
 }
 

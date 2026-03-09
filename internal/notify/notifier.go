@@ -10,6 +10,7 @@ type Notifier interface {
 
 	// Outbound notifications
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
+	NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []CheckResult) error
 	NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) error
 	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
 	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
@@ -34,6 +35,15 @@ func (n NoopNotifier) NotifyNeedsInput(ctx context.Context, projectID, question,
 	_ = projectID
 	_ = question
 	_ = approvalID
+	return nil
+}
+
+func (n NoopNotifier) NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []CheckResult) error {
+	_ = ctx
+	_ = projectID
+	_ = taskTitle
+	_ = approvalID
+	_ = checks
 	return nil
 }
 

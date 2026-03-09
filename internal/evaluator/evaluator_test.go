@@ -596,6 +596,13 @@ func (m *mockNotifier) NotifyNeedsInput(_ context.Context, _, _, _ string) error
 	return nil
 }
 
+func (m *mockNotifier) NotifyNeedsInputWithChecks(_ context.Context, _, _, _ string, _ []checklist.CheckResult) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.needsInputCalls++
+	return nil
+}
+
 func (m *mockNotifier) NotifyPRReady(_ context.Context, _, _, _ string, _ []checklist.CheckResult, _ []checklist.UserCheck) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

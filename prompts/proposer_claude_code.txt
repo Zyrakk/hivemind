@@ -38,6 +38,10 @@ ARTIFACT RULES:
    - Most tasks should have a "test" check
    - Add "file_exists" for new files, "grep" for specific code patterns
    - These run INSTEAD of Claude Code evaluation — they save quota
+   - IMPORTANT: Commands must be RELATIVE — do NOT prefix with "cd /path && ".
+     The evaluator handles the working directory automatically.
+     Good: "go build ./...", "grep -q 'pattern' internal/cli/audit.go", "test -f internal/cli/audit_test.go"
+     Bad:  "cd /app/repos/nhi-watch && go build ./...", "test -f /app/repos/nhi-watch/internal/cli/audit_test.go"
 
 4. user_checklist (human-only verification):
    - Only for things a machine cannot verify: UI/UX appearance, design decisions, infrastructure compatibility

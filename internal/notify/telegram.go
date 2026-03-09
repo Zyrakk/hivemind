@@ -113,6 +113,7 @@ type TelegramBot struct {
 	progressMu        sync.Mutex
 	progressTimelines map[string]*ProgressTimeline // taskID -> timeline
 	progressMsgIDs    map[string]int               // taskID -> Telegram message_id
+	planningMsgIDs    map[string]int               // projectRef -> planning Telegram message_id
 	editMessageFn     func(messageID int, text string) error
 
 	wg           sync.WaitGroup
@@ -294,6 +295,26 @@ func (t *TelegramBot) NotifyNeedsInput(ctx context.Context, projectID, question,
 	return t.enqueueMessage(ctx, FormatNeedsInputMessage(projectID, question, approvalID))
 }
 
+func (t *TelegramBot) NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []CheckResult) error {
+	approvalID = normalizeApprovalID(approvalID)
+	now := t.nowFn().UTC()
+
+	approval := &PendingApproval{
+		ID:          approvalID,
+		Type:        "input",
+		ProjectID:   strings.TrimSpace(projectID),
+		Description: strings.TrimSpace(taskTitle),
+		AcceptsText: true,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(t.approvalsTTL),
+	}
+	if err := t.upsertApproval(approval); err != nil {
+		return err
+	}
+
+	return t.enqueueMessage(ctx, FormatInputNeededWithChecks(projectID, taskTitle, approvalID, checks))
+}
+
 func (t *TelegramBot) NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) error {
 	approvalID = normalizeApprovalID(approvalID)
 	now := t.nowFn().UTC()
@@ -337,6 +358,18 @@ func (t *TelegramBot) NotifyProgress(ctx context.Context, project, taskID, stage
 	}
 
 	taskID = strings.TrimSpace(taskID)
+
+	// Handle planning progress: edit the stored planning message in place.
+	if strings.HasPrefix(stage, "planning-") {
+		planningStage := strings.TrimPrefix(stage, "planning-")
+		if msgID, ok := t.getPlanningMsgID(project); ok && msgID > 0 {
+			// detail carries the directive, planningStage carries the phase
+			rendered := FormatPlanningProgress(project, detail, nil, planningStage)
+			_ = t.editMessage(msgID, rendered)
+		}
+		return nil
+	}
+
 	if taskID == "" {
 		// Fallback for callers without a taskID: send as one-off silent message
 		return t.sendSilentMessage(FormatProgressMessage(project, stage, detail))
@@ -454,6 +487,30 @@ func (t *TelegramBot) NotifyProgress(ctx context.Context, project, taskID, stage
 	}
 
 	return nil
+}
+
+func (t *TelegramBot) storePlanningMsgID(project string, msgID int) {
+	t.progressMu.Lock()
+	defer t.progressMu.Unlock()
+	if t.planningMsgIDs == nil {
+		t.planningMsgIDs = make(map[string]int)
+	}
+	if msgID > 0 {
+		t.planningMsgIDs[project] = msgID
+	}
+}
+
+func (t *TelegramBot) getPlanningMsgID(project string) (int, bool) {
+	t.progressMu.Lock()
+	defer t.progressMu.Unlock()
+	id, ok := t.planningMsgIDs[project]
+	return id, ok
+}
+
+func (t *TelegramBot) clearPlanningMsgID(project string) {
+	t.progressMu.Lock()
+	defer t.progressMu.Unlock()
+	delete(t.planningMsgIDs, project)
 }
 
 func (t *TelegramBot) QueueMessage(message string) {
@@ -746,12 +803,13 @@ func (t *TelegramBot) cmdRun(ctx context.Context, args string) (string, error) {
 
 	t.setLastProjectRef(projectRef)
 
-	_ = t.enqueueMessage(ctx, formatEscapedLines(
-		fmt.Sprintf("… Planning for %s", projectRef),
-		fmt.Sprintf("Directive: %s", directive),
-	))
+	// Send box-drawing planning message and store its ID for edit-in-place.
+	planningMsg := FormatPlanningMessage(projectRef, directive, "analyzing repository...")
+	planningMsgID, _ := t.sendAndTrackMessage(planningMsg)
+	t.storePlanningMsgID(projectRef, planningMsgID)
 
 	planResult, err := t.plannerCreate.CreatePlan(ctx, directive, projectRef)
+	t.clearPlanningMsgID(projectRef)
 	if err != nil {
 		return formatEscapedLines(fmt.Sprintf("✗ Plan creation failed: %s", err.Error())), nil
 	}
@@ -813,9 +871,6 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 
 		go func(approval PendingApproval) {
 			execCtx := context.Background()
-			_ = t.enqueueMessage(execCtx, formatEscapedLines(
-				fmt.Sprintf(">> Executing plan %s for %s", approval.ID, approval.ProjectID),
-			))
 
 			if t.plannerExec == nil {
 				_ = t.enqueueMessage(execCtx, formatEscapedLines(
@@ -825,8 +880,15 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 			}
 
 			if err := t.plannerExec.ExecutePlan(execCtx, approval.ID); err != nil {
+				errMsg := err.Error()
+				// If the plan is held/escalated, send a HELD message instead of "failed"
+				if strings.Contains(errMsg, "escalated and awaiting input") || strings.Contains(errMsg, "blocked by failed dependencies") {
+					// HELD message is already sent by the planner/evaluator via NotifyNeedsInput.
+					// Don't send a redundant "completed" or "failed" message.
+					return
+				}
 				_ = t.enqueueMessage(execCtx, formatEscapedLines(
-					fmt.Sprintf("✗ Plan %s failed: %s", approval.ID, err.Error()),
+					fmt.Sprintf("✗ Plan %s failed: %s", approval.ID, errMsg),
 				))
 				return
 			}
@@ -836,7 +898,7 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 			))
 		}(copyApproval)
 
-		return formatEscapedLines(fmt.Sprintf("✓ Plan %s approved. Executing.", copyApproval.ID)), nil
+		return FormatApprovedMessage(copyApproval.ProjectID), nil
 	case "pr":
 		if err := t.markPRApproval(ctx, &copyApproval, true, ""); err != nil {
 			return "", err
