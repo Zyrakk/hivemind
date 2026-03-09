@@ -925,8 +925,11 @@ func formatPlanSummary(projectRef string, result *planner.PlanResult) string {
 		if title == "" {
 			title = fmt.Sprintf("Task %d", i+1)
 		}
-		description := strings.TrimSpace(task.Description)
-		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, title, description))
+		briefing := strings.TrimSpace(task.Briefing)
+		if briefing == "" {
+			briefing = strings.TrimSpace(task.Description)
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, title, briefing))
 		if len(task.DependsOn) > 0 {
 			sb.WriteString(fmt.Sprintf("   Depends on: %s\n", strings.Join(task.DependsOn, ", ")))
 		}
