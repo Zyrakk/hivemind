@@ -110,8 +110,11 @@ type TelegramBot struct {
 	sendRatePerSec   int
 	lastProjectRef   string
 	lastProjectRefMu sync.RWMutex
-	progressMu       sync.Mutex
-	lastProgressAt   map[string]time.Time
+	progressMu        sync.Mutex
+	lastProgressAt    map[string]time.Time
+	progressTimelines map[string]*ProgressTimeline // taskID -> timeline
+	progressMsgIDs    map[string]int               // taskID -> Telegram message_id
+	editMessageFn     func(messageID int, text string) error
 
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
@@ -334,22 +337,126 @@ func (t *TelegramBot) NotifyProgress(ctx context.Context, project, taskID, stage
 		return nil
 	}
 
-	key := strings.TrimSpace(project) + "|" + strings.TrimSpace(stage)
-	now := t.nowFn()
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		// Fallback for callers without a taskID: send as one-off silent message
+		return t.sendSilentMessage(FormatProgressMessage(project, stage, detail))
+	}
 
 	t.progressMu.Lock()
-	if t.lastProgressAt == nil {
-		t.lastProgressAt = make(map[string]time.Time)
+	if t.progressTimelines == nil {
+		t.progressTimelines = make(map[string]*ProgressTimeline)
 	}
-	if last, ok := t.lastProgressAt[key]; ok && now.Sub(last) < 5*time.Second {
-		t.progressMu.Unlock()
-		return nil
+	if t.progressMsgIDs == nil {
+		t.progressMsgIDs = make(map[string]int)
 	}
-	t.lastProgressAt[key] = now
+
+	tl, exists := t.progressTimelines[taskID]
+	if !exists {
+		tl = &ProgressTimeline{
+			Project: strings.TrimSpace(project),
+		}
+		t.progressTimelines[taskID] = tl
+	}
+
+	// Extract title from "launching" detail (format: "task N/M: Title")
+	if stage == "launching" {
+		if idx := strings.Index(detail, ": "); idx >= 0 {
+			tl.Title = detail[idx+2:]
+		} else {
+			tl.Title = detail
+		}
+	}
+
+	// Extract branch from "worker-started" detail
+	if stage == "worker-started" && strings.HasPrefix(detail, "branch: ") {
+		tl.Branch = strings.TrimPrefix(detail, "branch: ")
+	}
+
+	// Mark previous active entries as done
+	for i := range tl.Entries {
+		if tl.Entries[i].Status == ProgressStatusActive {
+			tl.Entries[i].Status = ProgressStatusDone
+		}
+	}
+
+	// Determine status for new entry
+	newStatus := ProgressStatusActive
+	isTerminal := false
+	displayStage := stage
+	displayDetail := detail
+
+	switch stage {
+	case "launching":
+		displayStage = "launching"
+	case "worker-started":
+		displayStage = "worker started"
+	case "codex-executing":
+		displayStage = "codex executing"
+	case "worker-completed":
+		displayStage = "worker completed"
+	case "push-successful":
+		displayStage = "pushed to origin"
+	case "push-failed":
+		displayStage = "push failed"
+		newStatus = ProgressStatusFailed
+	case "evaluation-done":
+		displayStage = "evaluation: " + detail
+		displayDetail = "" // already included in stage name
+		if strings.HasPrefix(detail, "iterate") {
+			newStatus = ProgressStatusFailed
+		} else {
+			newStatus = ProgressStatusDone
+		}
+		isTerminal = detail == "accept" || detail == "escalate"
+	}
+
+	tl.Entries = append(tl.Entries, ProgressEntry{
+		Stage:  displayStage,
+		Detail: displayDetail,
+		Status: newStatus,
+		Time:   t.nowFn(),
+	})
+
+	rendered := RenderProgressTimeline(tl)
+	msgID, hasMsgID := t.progressMsgIDs[taskID]
 	t.progressMu.Unlock()
 
-	message := FormatProgressMessage(project, stage, detail)
-	return t.sendSilentMessage(message)
+	if !hasMsgID {
+		// First message for this task — send new
+		newMsgID, err := t.sendAndTrackMessage(rendered)
+		if err != nil {
+			return err
+		}
+		t.progressMu.Lock()
+		t.progressMsgIDs[taskID] = newMsgID
+		t.progressMu.Unlock()
+	} else {
+		// Edit existing message
+		if err := t.editMessage(msgID, rendered); err != nil {
+			// Fallback: send new message if edit fails
+			t.logger.Warn("edit progress message failed, sending new",
+				slog.String("task_id", taskID),
+				slog.Any("error", err))
+			newMsgID, sendErr := t.sendAndTrackMessage(rendered)
+			if sendErr != nil {
+				return sendErr
+			}
+			t.progressMu.Lock()
+			t.progressMsgIDs[taskID] = newMsgID
+			t.progressMu.Unlock()
+		}
+	}
+
+	// Clean up on terminal state
+	if isTerminal {
+		t.progressMu.Lock()
+		delete(t.progressTimelines, taskID)
+		delete(t.progressMsgIDs, taskID)
+		t.progressMu.Unlock()
+	}
+
+	return nil
 }
 
 func (t *TelegramBot) QueueMessage(message string) {
@@ -1338,6 +1445,43 @@ func (t *TelegramBot) enqueueMessage(ctx context.Context, message string) error 
 		t.logger.Warn("telegram outbox still full; dropped newest message")
 		return nil
 	}
+}
+
+func (t *TelegramBot) editMessage(messageID int, text string) error {
+	if t.editMessageFn != nil {
+		return t.editMessageFn(messageID, text)
+	}
+	if t.bot == nil {
+		return ErrNotifierNotRunning
+	}
+
+	edit := tgbotapi.NewEditMessageText(t.allowedChatID, messageID, text)
+	edit.ParseMode = tgbotapi.ModeMarkdownV2
+
+	_, err := t.bot.Send(edit)
+	if err != nil {
+		return fmt.Errorf("telegram edit: %w", err)
+	}
+	return nil
+}
+
+func (t *TelegramBot) sendAndTrackMessage(text string) (int, error) {
+	if t.sendMessageFn != nil {
+		return 0, t.sendMessageFn(text)
+	}
+	if t.bot == nil {
+		return 0, ErrNotifierNotRunning
+	}
+
+	msg := tgbotapi.NewMessage(t.allowedChatID, text)
+	msg.ParseMode = tgbotapi.ModeMarkdownV2
+	msg.DisableNotification = true
+
+	sent, err := t.bot.Send(msg)
+	if err != nil {
+		return 0, fmt.Errorf("telegram send: %w", err)
+	}
+	return sent.MessageID, nil
 }
 
 func (t *TelegramBot) sendMessage(message string) error {

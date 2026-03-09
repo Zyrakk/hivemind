@@ -892,65 +892,136 @@ func TestNotifyProgressSendsFormattedMessage(t *testing.T) {
 	}
 }
 
-func TestNotifyProgressRateLimitsPerProjectStage(t *testing.T) {
+func TestNotifyProgressEditInPlace_FirstMessageSent(t *testing.T) {
 	t.Parallel()
-	var sent int
+	var sent []string
 	var mu sync.Mutex
-	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
-	bot := newTestBot(newMockStore(now))
+	bot := newTestBot(newMockStore(time.Now().UTC()))
 	bot.started.Store(true)
-	bot.nowFn = func() time.Time { return now }
 	bot.sendMessageFn = func(text string) error {
 		mu.Lock()
-		sent++
+		sent = append(sent, text)
 		mu.Unlock()
 		return nil
 	}
 
-	ctx := context.Background()
-
-	// First call goes through
-	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail1")
-	// Same project+stage within 5s — dropped
-	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail2")
-	// Different stage — goes through
-	_ = bot.NotifyProgress(ctx, "flux", "", "codex-executing", "~3min")
-	// Different project — goes through
-	_ = bot.NotifyProgress(ctx, "nhi", "", "worker-started", "detail3")
-
+	_ = bot.NotifyProgress(context.Background(), "flux", "t1", "launching", "task 1/1: Fix bug")
 	mu.Lock()
 	defer mu.Unlock()
-	if sent != 3 {
-		t.Fatalf("expected 3 messages (rate-limited 1), got %d", sent)
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(sent))
+	}
+	if !strings.Contains(sent[0], "flux") || !strings.Contains(sent[0], "launching") {
+		t.Fatalf("expected timeline content, got %q", sent[0])
 	}
 }
 
-func TestNotifyProgressAllowsAfterCooldown(t *testing.T) {
+func TestNotifyProgressEditInPlace_SubsequentEdits(t *testing.T) {
 	t.Parallel()
-	var sent int
+	var sent []string
+	var edited []string
 	var mu sync.Mutex
-	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
-	bot := newTestBot(newMockStore(now))
+	bot := newTestBot(newMockStore(time.Now().UTC()))
 	bot.started.Store(true)
-	bot.nowFn = func() time.Time { return now }
 	bot.sendMessageFn = func(text string) error {
 		mu.Lock()
-		sent++
+		sent = append(sent, text)
+		mu.Unlock()
+		return nil
+	}
+	bot.editMessageFn = func(msgID int, text string) error {
+		mu.Lock()
+		edited = append(edited, text)
 		mu.Unlock()
 		return nil
 	}
 
 	ctx := context.Background()
-	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail1")
-
-	// Advance time past cooldown
-	now = now.Add(6 * time.Second)
-	_ = bot.NotifyProgress(ctx, "flux", "", "worker-started", "detail2")
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "launching", "task 1/1: Fix bug")
+	// sendMessageFn returns msgID 0, which is stored
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "worker-started", "branch: feature/fix")
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "codex-executing", "~3min est.")
 
 	mu.Lock()
 	defer mu.Unlock()
-	if sent != 2 {
-		t.Fatalf("expected 2 messages after cooldown, got %d", sent)
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(sent))
+	}
+	if len(edited) != 2 {
+		t.Fatalf("expected 2 edits, got %d", len(edited))
+	}
+	// Last edit should have all three stages
+	last := edited[len(edited)-1]
+	if !strings.Contains(last, "✓ launching") {
+		t.Fatalf("expected done launching, got %q", last)
+	}
+	if !strings.Contains(last, "codex executing") {
+		t.Fatalf("expected codex executing, got %q", last)
+	}
+}
+
+func TestNotifyProgressEditInPlace_CleansUpOnTerminal(t *testing.T) {
+	t.Parallel()
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.started.Store(true)
+	bot.sendMessageFn = func(text string) error { return nil }
+	bot.editMessageFn = func(msgID int, text string) error { return nil }
+
+	ctx := context.Background()
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "launching", "task 1/1")
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "evaluation-done", "accept")
+
+	bot.progressMu.Lock()
+	_, hasTimeline := bot.progressTimelines["t1"]
+	_, hasMsgID := bot.progressMsgIDs["t1"]
+	bot.progressMu.Unlock()
+
+	if hasTimeline || hasMsgID {
+		t.Fatal("expected progress state cleanup after terminal event")
+	}
+}
+
+func TestNotifyProgressEditInPlace_EditFailureFallback(t *testing.T) {
+	t.Parallel()
+	var sendCount int
+	var mu sync.Mutex
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.started.Store(true)
+	bot.sendMessageFn = func(text string) error {
+		mu.Lock()
+		sendCount++
+		mu.Unlock()
+		return nil
+	}
+	bot.editMessageFn = func(msgID int, text string) error {
+		return fmt.Errorf("message not found")
+	}
+
+	ctx := context.Background()
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "launching", "task 1/1")
+	_ = bot.NotifyProgress(ctx, "flux", "t1", "worker-started", "branch: x")
+
+	mu.Lock()
+	defer mu.Unlock()
+	// First send + fallback send after edit failure = 2
+	if sendCount != 2 {
+		t.Fatalf("expected 2 sends (initial + fallback), got %d", sendCount)
+	}
+}
+
+func TestNotifyProgressEmptyTaskIDFallback(t *testing.T) {
+	t.Parallel()
+	var sent int
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	bot.started.Store(true)
+	bot.sendMessageFn = func(text string) error {
+		sent++
+		return nil
+	}
+
+	_ = bot.NotifyProgress(context.Background(), "flux", "", "worker-started", "branch: x")
+	if sent != 1 {
+		t.Fatalf("expected 1 message for empty taskID, got %d", sent)
 	}
 }
 
