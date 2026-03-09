@@ -111,7 +111,6 @@ type TelegramBot struct {
 	lastProjectRef   string
 	lastProjectRefMu sync.RWMutex
 	progressMu        sync.Mutex
-	lastProgressAt    map[string]time.Time
 	progressTimelines map[string]*ProgressTimeline // taskID -> timeline
 	progressMsgIDs    map[string]int               // taskID -> Telegram message_id
 	editMessageFn     func(messageID int, text string) error
