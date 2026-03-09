@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/checklist"
 	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
@@ -914,6 +915,15 @@ func (m *mockPlannerNotifier) NotifyNeedsInput(ctx context.Context, projectID, q
 	_ = projectID
 	_ = question
 	_ = approvalID
+	return nil
+}
+
+func (m *mockPlannerNotifier) NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []checklist.CheckResult) error {
+	_ = ctx
+	_ = projectID
+	_ = taskTitle
+	_ = approvalID
+	_ = checks
 	return nil
 }
 

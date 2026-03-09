@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/checklist"
 	"github.com/zyrakk/hivemind/internal/engine"
 	"github.com/zyrakk/hivemind/internal/evaluator"
 	"github.com/zyrakk/hivemind/internal/launcher"
@@ -59,6 +60,7 @@ type plannerRecon interface {
 
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
+	NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []checklist.CheckResult) error
 	NotifyWorkerFailed(ctx context.Context, projectID, taskTitle, errMsg string) error
 	NotifyTaskCompleted(ctx context.Context, projectID, taskTitle string) error
 	NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error
@@ -691,9 +693,14 @@ func (p *Planner) createPlanViaEngine(
 			return nil, fmt.Errorf("think turn %d returned nil result", i+1)
 		}
 
-		switch strings.ToLower(strings.TrimSpace(thinkResult.Type)) {
+		thinkType := strings.ToLower(strings.TrimSpace(thinkResult.Type))
+		// Notify planning progress for edit-in-place updates.
+		p.notifyProgress(ctx, projectID, "", "planning-"+thinkType, directive)
+
+		switch thinkType {
 		case "ready":
 			thinkingSummary = strings.TrimSpace(thinkResult.Summary)
+			p.notifyProgress(ctx, projectID, "", "planning-generating plan...", directive)
 			goto propose
 		case "question":
 			question := strings.TrimSpace(thinkResult.Question)

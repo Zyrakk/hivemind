@@ -361,11 +361,23 @@ func (l *Launcher) pushWorkerBranch(ctx context.Context, repoDir, branch string)
 	}
 
 	_, err := l.runCommand(ctx, l.config.GitBinary, "-C", repoDir, "push", l.config.GitRemote, branch)
-	if err != nil {
-		return err
+	if err == nil {
+		return nil
 	}
 
-	return nil
+	errMsg := strings.ToLower(err.Error())
+	if strings.Contains(errMsg, "non-fast-forward") || strings.Contains(errMsg, "rejected") || strings.Contains(errMsg, "behind") {
+		l.logger.Warn("git push rejected, retrying with --force-with-lease",
+			slog.String("branch", branch),
+			slog.String("repo_dir", repoDir))
+		_, forceErr := l.runCommand(ctx, l.config.GitBinary, "-C", repoDir, "push", "--force-with-lease", l.config.GitRemote, branch)
+		if forceErr != nil {
+			return forceErr
+		}
+		return nil
+	}
+
+	return err
 }
 
 func (l *Launcher) updateWorkerStatus(ctx context.Context, worker *WorkerProcess, status string, errorMessage string) {

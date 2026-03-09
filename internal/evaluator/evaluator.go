@@ -62,9 +62,10 @@ type UserCheck struct {
 }
 
 type checkResult struct {
-	Check  AutomatedCheck
-	Passed bool
-	Output string
+	Check   AutomatedCheck
+	Passed  bool
+	Skipped bool
+	Output  string
 }
 
 type EvalResult struct {
@@ -84,6 +85,7 @@ type CompletionResult struct {
 
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
+	NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []checklist.CheckResult) error
 	NotifyPRReady(ctx context.Context, projectID, branch, approvalID string, autoResults []checklist.CheckResult, userChecks []checklist.UserCheck) error
 	NotifyProgress(ctx context.Context, project, taskID, stage, detail string) error
 }
@@ -259,6 +261,8 @@ func (e *Evaluator) evaluateWithChecklist(ctx context.Context, checklists TaskCh
 		if cmd == "" {
 			continue
 		}
+		// Strip leading "cd <path> && " if present — the evaluator adds its own.
+		cmd = stripCdPrefix(cmd)
 		if !isAllowedChecklistCommand(cmd) {
 			e.logger.Warn("checklist command rejected by allowlist",
 				slog.String("command", cmd), slog.String("check_id", check.ID))
@@ -280,6 +284,16 @@ func (e *Evaluator) evaluateWithChecklist(ctx context.Context, checklists TaskCh
 		}
 		if runErr != nil && output == "" {
 			output = runErr.Error()
+		}
+		// Detect exit 127 (command not found) — mark as skipped, not failed.
+		if !passed && isCommandNotFound(output) {
+			results = append(results, checkResult{
+				Check:   check,
+				Passed:  false,
+				Skipped: true,
+				Output:  output,
+			})
+			continue
 		}
 		results = append(results, checkResult{
 			Check:  check,
@@ -342,19 +356,51 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 	// Checklist-based evaluation: runs before engine/GLM to save quota
 	if taskHasChecklists && len(checklists.AutomatedChecklist) > 0 && rc != nil {
 		repoPath := resolveRepoPathForEval(projectName, session, launcherWorkDir(e.launcher))
+
+		// Checkout the worker's branch so checklist commands see actual changes.
+		branch := strings.TrimSpace(session.Branch)
+		checkedOutBranch := false
+		if repoPath != "" && branch != "" {
+			if err := checkoutBranch(repoPath, branch); err != nil {
+				e.logger.Warn("checkout worker branch for checklist failed, running against current state",
+					slog.String("branch", branch), slog.String("error", err.Error()))
+			} else {
+				checkedOutBranch = true
+			}
+		}
+
 		var checkErr error
 		checkResults, checkErr = e.evaluateWithChecklist(ctx, checklists, repoPath)
+
+		// Restore main branch after checklist evaluation.
+		if checkedOutBranch {
+			if restoreErr := checkoutBranch(repoPath, "main"); restoreErr != nil {
+				e.logger.Warn("restore main branch after checklist failed",
+					slog.String("error", restoreErr.Error()))
+			}
+		}
+
 		if checkErr == nil {
 			allPassed := true
 			var failedChecks []string
+			skippedCount := 0
 			for _, cr := range checkResults {
+				if cr.Skipped {
+					skippedCount++
+					continue
+				}
 				if !cr.Passed {
 					allPassed = false
 					failedChecks = append(failedChecks, fmt.Sprintf("[%s] %s: %s", cr.Check.ID, cr.Check.Description, cr.Output))
 				}
 			}
+			actuallyRun := len(checkResults) - skippedCount
 
 			if allPassed && len(checklists.UserChecklist) == 0 {
+				summary := fmt.Sprintf("All %d automated checks passed", actuallyRun)
+				if skippedCount > 0 {
+					summary += fmt.Sprintf(" (%d skipped)", skippedCount)
+				}
 				evaluation = &llm.Evaluation{
 					Verdict:      "accept",
 					Confidence:   0.9,
@@ -362,7 +408,7 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 					Correctness:  0.9,
 					Conventions:  0.9,
 					ScopeOK:      true,
-					Summary:      fmt.Sprintf("All %d automated checks passed", len(checkResults)),
+					Summary:      summary,
 				}
 				goto postEval
 			}
@@ -379,6 +425,10 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 					approvalID := fmt.Sprintf("input-%d-%d", taskRecord.ProjectID, taskRecord.ID)
 					_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, question, approvalID)
 				}
+				summary := fmt.Sprintf("All %d automated checks passed. User checklist sent for review.", actuallyRun)
+				if skippedCount > 0 {
+					summary += fmt.Sprintf(" (%d skipped)", skippedCount)
+				}
 				evaluation = &llm.Evaluation{
 					Verdict:      "accept",
 					Confidence:   0.8,
@@ -386,7 +436,7 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 					Correctness:  0.9,
 					Conventions:  0.9,
 					ScopeOK:      true,
-					Summary:      fmt.Sprintf("All %d automated checks passed. User checklist sent for review.", len(checkResults)),
+					Summary:      summary,
 				}
 				goto postEval
 			}
@@ -399,7 +449,7 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 				Correctness:  0.4,
 				Conventions:  0.9,
 				ScopeOK:      false,
-				Summary:      fmt.Sprintf("%d/%d automated checks failed", len(failedChecks), len(checkResults)),
+				Summary:      fmt.Sprintf("%d/%d automated checks failed", len(failedChecks), actuallyRun),
 			}
 			for _, fc := range failedChecks {
 				evaluation.Issues = append(evaluation.Issues, llm.Issue{
@@ -568,7 +618,7 @@ postEval:
 		}
 		retryCount = nextRetry
 	case "escalate":
-		if escalateErr := e.escalateToUser(ctx, taskRecord.ProjectID, taskID, workerRef, escalationReason(evaluation)); escalateErr != nil {
+		if escalateErr := e.escalateToUserWithChecks(ctx, taskRecord.ProjectID, taskID, strings.TrimSpace(taskRecord.Title), workerRef, escalationReason(evaluation), checkResults); escalateErr != nil {
 			return nil, escalateErr
 		}
 	}
@@ -964,6 +1014,54 @@ func shellQuotePath(path string) string {
 	return "'" + strings.ReplaceAll(path, "'", `'"'"'`) + "'"
 }
 
+// stripCdPrefix removes a leading "cd <path> && " from a command.
+// Handles both quoted and unquoted paths.
+func stripCdPrefix(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	if !strings.HasPrefix(cmd, "cd ") {
+		return cmd
+	}
+	idx := strings.Index(cmd, " && ")
+	if idx < 0 {
+		return cmd
+	}
+	return strings.TrimSpace(cmd[idx+4:])
+}
+
+// isCommandNotFound detects exit code 127 (command not found) in output.
+func isCommandNotFound(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "exit status 127") ||
+		strings.Contains(lower, "command not found") ||
+		strings.Contains(lower, "not found in")
+}
+
+// checkoutBranch fetches and checks out a branch in the given repo directory.
+func checkoutBranch(repoPath, branch string) error {
+	// For "main" or local branches, just checkout directly first.
+	cmd := exec.Command("git", "-C", repoPath, "checkout", branch)
+	if out, err := cmd.CombinedOutput(); err == nil {
+		return nil
+	} else {
+		_ = out // direct checkout failed, try fetch first
+	}
+
+	fetchCmd := exec.Command("git", "-C", repoPath, "fetch", "origin", branch)
+	if out, err := fetchCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch %s: %w (%s)", branch, err, strings.TrimSpace(string(out)))
+	}
+
+	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", branch)
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		// Try FETCH_HEAD as fallback.
+		fallbackCmd := exec.Command("git", "-C", repoPath, "checkout", "FETCH_HEAD")
+		if out2, err2 := fallbackCmd.CombinedOutput(); err2 != nil {
+			return fmt.Errorf("git checkout %s: %w (%s / %s)", branch, err, strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
+		}
+	}
+	return nil
+}
+
 func decideAction(evaluation *llm.Evaluation, forceIterate bool, retryCount int) string {
 	if evaluation == nil {
 		if retryCount < 2 {
@@ -1044,6 +1142,71 @@ func firstAvailableConsultant(consultants []llm.ConsultantClient) llm.Consultant
 			return consultant
 		}
 	}
+	return nil
+}
+
+func (e *Evaluator) escalateToUserWithChecks(ctx context.Context, projectID int64, taskID int64, taskTitle string, workerID *int64, reason string, checks []checkResult) error {
+	e.mu.Lock()
+	evalNotifier := e.notifier
+	e.mu.Unlock()
+
+	if e.db == nil {
+		if evalNotifier != nil {
+			projectRef := strconv.FormatInt(projectID, 10)
+			if projectID <= 0 {
+				projectRef = "unknown"
+			}
+			approvalID := fmt.Sprintf("input-%d-%d", projectID, taskID)
+			if len(checks) > 0 {
+				_ = evalNotifier.NotifyNeedsInputWithChecks(ctx, projectRef, taskTitle, approvalID, convertCheckResults(checks))
+			} else {
+				_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, strings.TrimSpace(reason), approvalID)
+			}
+		}
+		return nil
+	}
+
+	status := state.TaskStatusBlocked
+	if taskID > 0 {
+		if err := e.db.UpdateTask(ctx, taskID, state.TaskUpdate{Status: &status}); err != nil {
+			return fmt.Errorf("mark task %d blocked: %w", taskID, err)
+		}
+	}
+
+	if projectID > 0 {
+		projectStatus := state.ProjectStatusNeedsInput
+		if err := e.db.UpdateProjectStatus(ctx, projectID, projectStatus); err != nil && !errors.Is(err, state.ErrNotFound) {
+			return fmt.Errorf("mark project %d needs_input: %w", projectID, err)
+		}
+	}
+
+	if projectID > 0 {
+		description := fmt.Sprintf("Evaluator escalated task %d for user input: %s", taskID, strings.TrimSpace(reason))
+		if err := e.db.AppendEvent(ctx, state.Event{
+			ProjectID:   projectID,
+			WorkerID:    workerID,
+			EventType:   "input_needed",
+			Description: description,
+		}); err != nil {
+			return fmt.Errorf("append escalation event for project %d: %w", projectID, err)
+		}
+	}
+
+	if evalNotifier != nil {
+		projectRef := strconv.FormatInt(projectID, 10)
+		if projectID > 0 {
+			if project, err := e.db.GetProjectByID(ctx, projectID); err == nil && strings.TrimSpace(project.Name) != "" {
+				projectRef = strings.TrimSpace(project.Name)
+			}
+		}
+		approvalID := fmt.Sprintf("input-%d-%d", projectID, taskID)
+		if len(checks) > 0 {
+			_ = evalNotifier.NotifyNeedsInputWithChecks(ctx, projectRef, taskTitle, approvalID, convertCheckResults(checks))
+		} else {
+			_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, strings.TrimSpace(reason), approvalID)
+		}
+	}
+
 	return nil
 }
 
@@ -1153,6 +1316,7 @@ func convertCheckResults(results []checkResult) []checklist.CheckResult {
 			Description: r.Check.Description,
 			Command:     r.Check.Command,
 			Passed:      r.Passed,
+			Skipped:     r.Skipped,
 			Output:      r.Output,
 		}
 	}

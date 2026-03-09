@@ -112,7 +112,7 @@ func TestCommandsWithMockStore(t *testing.T) {
 		if err != nil {
 			t.Fatalf("approve command failed: %v", err)
 		}
-		if !strings.Contains(msg, "approved") {
+		if !strings.Contains(msg, "APPROVED") {
 			t.Fatalf("expected success message, got %q", msg)
 		}
 		select {
@@ -376,7 +376,7 @@ func TestCmdApprove_ExecutesPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("approve command failed: %v", err)
 	}
-	if !strings.Contains(msg, "approved") {
+	if !strings.Contains(msg, "APPROVED") {
 		t.Fatalf("expected async approval message, got %q", msg)
 	}
 

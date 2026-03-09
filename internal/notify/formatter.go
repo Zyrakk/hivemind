@@ -87,20 +87,85 @@ func FormatNeedsInputMessage(projectID, question, approvalID string) string {
 	box.WriteString("└────────────────────────────")
 
 	msg := codeBlock(box.String())
-	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", approvalID))
-	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/reject %s {reason}", approvalID))
-	msg += "\n" + EscapeMarkdownV2("Or reply directly with free text.")
+	msg += "\n" + codeBlock(fmt.Sprintf("/approve %s", approvalID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/reject %s {reason}", approvalID))
 
 	return TruncateTelegramMessage(msg)
 }
 
+// FormatInputNeededWithChecks renders a structured INPUT NEEDED message with check results.
+func FormatInputNeededWithChecks(projectID, taskTitle, approvalID string, checks []CheckResult) string {
+	var box strings.Builder
+	box.WriteString("┌─ INPUT NEEDED ─────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectID))
+	if taskTitle != "" {
+		box.WriteString(fmt.Sprintf("│ Task:    %s\n", taskTitle))
+	}
+
+	if len(checks) > 0 {
+		box.WriteString("├─ checks ───────────────────\n")
+		passed := 0
+		skipped := 0
+		for _, c := range checks {
+			cmd := c.Command
+			if cmd == "" {
+				cmd = c.Description
+			}
+			if c.Skipped {
+				skipped++
+				reason := extractSkipReason(c.Output)
+				box.WriteString(fmt.Sprintf("│ ⊘ %-20s (skipped: %s)\n", cmd, reason))
+			} else if c.Passed {
+				passed++
+				box.WriteString(fmt.Sprintf("│ ✓ %s\n", cmd))
+			} else {
+				box.WriteString(fmt.Sprintf("│ ✗ %s\n", cmd))
+			}
+		}
+		actuallyRun := len(checks) - skipped
+		box.WriteString("├────────────────────────────\n")
+		summary := fmt.Sprintf("│ %d/%d passed", passed, actuallyRun)
+		if skipped > 0 {
+			summary += fmt.Sprintf(" │ %d skipped", skipped)
+		}
+		box.WriteString(summary + "\n")
+	}
+
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + codeBlock(fmt.Sprintf("/approve %s", approvalID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/reject %s {reason}", approvalID))
+
+	return TruncateTelegramMessage(msg)
+}
+
+// extractSkipReason extracts a short reason from command output for "skipped" display.
+func extractSkipReason(output string) string {
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "not found") {
+		// Try to extract the command name
+		for _, pattern := range []string{"go:", "python:", "node:", "npm:", "cargo:", "make:"} {
+			if idx := strings.Index(lower, pattern); idx >= 0 {
+				return strings.TrimSpace(strings.Split(output[idx:], ":")[0]) + " not installed"
+			}
+		}
+		return "command not found"
+	}
+	return "tool not available"
+}
+
 func FormatPRReadyMessage(projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) string {
 	passed := 0
+	skipped := 0
 	for _, r := range autoResults {
-		if r.Passed {
+		if r.Skipped {
+			skipped++
+		} else if r.Passed {
 			passed++
 		}
 	}
+	actuallyRun := len(autoResults) - skipped
 
 	var box strings.Builder
 	box.WriteString("┌─ PR READY ─────────────────\n")
@@ -108,17 +173,24 @@ func FormatPRReadyMessage(projectID, branch, approvalID string, autoResults []Ch
 	box.WriteString(fmt.Sprintf("│ Branch:  %s\n", branch))
 	if len(autoResults) > 0 {
 		box.WriteString("├────────────────────────────\n")
-		box.WriteString(fmt.Sprintf("│ ✓ Automated: %d/%d\n", passed, len(autoResults)))
+		summaryLine := fmt.Sprintf("│ ✓ Automated: %d/%d", passed, actuallyRun)
+		if skipped > 0 {
+			summaryLine += fmt.Sprintf(" │ %d skipped", skipped)
+		}
+		box.WriteString(summaryLine + "\n")
 		for _, r := range autoResults {
-			icon := "✓"
-			if !r.Passed {
-				icon = "✗"
-			}
 			cmd := r.Command
 			if cmd == "" {
 				cmd = r.Description
 			}
-			box.WriteString(fmt.Sprintf("│   %s %s\n", icon, cmd))
+			if r.Skipped {
+				reason := extractSkipReason(r.Output)
+				box.WriteString(fmt.Sprintf("│   ⊘ %-20s (skipped: %s)\n", cmd, reason))
+			} else if r.Passed {
+				box.WriteString(fmt.Sprintf("│   ✓ %s\n", cmd))
+			} else {
+				box.WriteString(fmt.Sprintf("│   ✗ %s\n", cmd))
+			}
 		}
 	}
 	if len(userChecks) > 0 {
@@ -131,7 +203,7 @@ func FormatPRReadyMessage(projectID, branch, approvalID string, autoResults []Ch
 	box.WriteString("└────────────────────────────")
 
 	msg := codeBlock(box.String())
-	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", approvalID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/approve %s", approvalID))
 
 	return TruncateTelegramMessage(msg)
 }
@@ -307,14 +379,69 @@ func FormatPlanMessage(projectRef string, result *planner.PlanResult) string {
 	box.WriteString("└────────────────────────────")
 
 	msg := codeBlock(box.String())
-	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", result.PlanID))
-	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/reject %s {reason}", result.PlanID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/approve %s", result.PlanID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/reject %s {reason}", result.PlanID))
 
 	return TruncateTelegramMessage(msg)
 }
 
 func FormatProgressMessage(project, stage, detail string) string {
 	return EscapeMarkdownV2(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
+}
+
+// FormatPlanningMessage renders a box-drawing PLANNING message.
+func FormatPlanningMessage(project, directive, stage string) string {
+	var box strings.Builder
+	box.WriteString("┌─ PLANNING ─────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project:   %s\n", project))
+	// Word-wrap directive at ~24 chars for the box
+	box.WriteString(fmt.Sprintf("│ Directive: %s\n", directive))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ ▸ %s\n", stage))
+	box.WriteString("└────────────────────────────")
+	return codeBlock(box.String())
+}
+
+// FormatPlanningProgress renders a PLANNING message with completed stages.
+func FormatPlanningProgress(project, directive string, doneStages []string, activeStage string) string {
+	var box strings.Builder
+	box.WriteString("┌─ PLANNING ─────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project:   %s\n", project))
+	box.WriteString(fmt.Sprintf("│ Directive: %s\n", directive))
+	box.WriteString("├────────────────────────────\n")
+	for _, s := range doneStages {
+		box.WriteString(fmt.Sprintf("│ ✓ %s\n", s))
+	}
+	if activeStage != "" {
+		box.WriteString(fmt.Sprintf("│ ▸ %s\n", activeStage))
+	}
+	box.WriteString("└────────────────────────────")
+	return codeBlock(box.String())
+}
+
+// FormatApprovedMessage renders a box-drawing APPROVED message.
+func FormatApprovedMessage(project string) string {
+	var box strings.Builder
+	box.WriteString("┌─ APPROVED ─────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", project))
+	box.WriteString("│ ▸ executing plan...\n")
+	box.WriteString("└────────────────────────────")
+	return codeBlock(box.String())
+}
+
+// FormatHeldMessage renders a box-drawing HELD message with escalated tasks.
+func FormatHeldMessage(project string, escalatedTasks []string) string {
+	var box strings.Builder
+	box.WriteString("┌─ HELD ─────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", project))
+	box.WriteString("│ Status:  awaiting input\n")
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ ◐ %d task(s) escalated\n", len(escalatedTasks)))
+	for _, t := range escalatedTasks {
+		box.WriteString(fmt.Sprintf("│   %s\n", t))
+	}
+	box.WriteString("└────────────────────────────")
+	return codeBlock(box.String())
 }
 
 func FormatEngineSwitchMessage(from, to, reason string) string {
