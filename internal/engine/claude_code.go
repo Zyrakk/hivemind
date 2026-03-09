@@ -633,7 +633,8 @@ func validatePlanResult(result *PlanResult) error {
 		if strings.TrimSpace(task.Prompt) == "" && strings.TrimSpace(task.ExecutionPrompt) == "" {
 			return fmt.Errorf("plan task[%d] missing prompt or execution_prompt", idx)
 		}
-		// Backfill for backward compat
+		// Backfill for backward compat: new-style plans provide execution_prompt
+		// and leave prompt empty; we backfill prompt for callers that still read it.
 		if strings.TrimSpace(task.Prompt) == "" {
 			task.Prompt = strings.TrimSpace(task.ExecutionPrompt)
 		}
