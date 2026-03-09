@@ -7,6 +7,13 @@ type TaskPlan struct {
 	Notes      string   `json:"notes"`
 }
 
+type CheckItem struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Command     string `json:"command,omitempty"`
+	Type        string `json:"type"`
+}
+
 type Task struct {
 	ID                 string   `json:"id"`
 	Title              string   `json:"title"`
@@ -16,6 +23,12 @@ type Task struct {
 	DependsOn          []string `json:"depends_on"`
 	Complexity         string   `json:"estimated_complexity"`
 	BranchName         string   `json:"branch_name"`
+
+	// New artifact fields (populated from engine.PlanTask)
+	Briefing           string      `json:"briefing,omitempty"`
+	ExecutionPrompt    string      `json:"execution_prompt,omitempty"`
+	AutomatedChecklist []CheckItem `json:"automated_checklist,omitempty"`
+	UserChecklist      []CheckItem `json:"user_checklist,omitempty"`
 }
 
 type Evaluation struct {

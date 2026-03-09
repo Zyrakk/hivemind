@@ -1095,13 +1095,22 @@ func convertEnginePlanToLLMPlan(result *engine.PlanResult) *llm.TaskPlan {
 			description = strings.TrimSpace(task.Prompt)
 		}
 
+		executionPrompt := strings.TrimSpace(task.ExecutionPrompt)
+		if executionPrompt == "" {
+			executionPrompt = strings.TrimSpace(task.Prompt)
+		}
+
 		tasks = append(tasks, llm.Task{
-			ID:          strings.TrimSpace(task.ID),
-			Title:       strings.TrimSpace(task.Title),
-			Description: description,
-			DependsOn:   append([]string(nil), task.Dependencies...),
-			Complexity:  complexityFromPriority(task.Priority),
-			BranchName:  strings.TrimSpace(task.BranchName),
+			ID:                 strings.TrimSpace(task.ID),
+			Title:              strings.TrimSpace(task.Title),
+			Description:        description,
+			DependsOn:          append([]string(nil), task.Dependencies...),
+			Complexity:         complexityFromPriority(task.Priority),
+			BranchName:         strings.TrimSpace(task.BranchName),
+			Briefing:           strings.TrimSpace(task.Briefing),
+			ExecutionPrompt:    executionPrompt,
+			AutomatedChecklist: convertEngineChecks(task.AutomatedChecklist),
+			UserChecklist:      convertEngineChecks(task.UserChecklist),
 		})
 	}
 
@@ -1112,6 +1121,22 @@ func convertEnginePlanToLLMPlan(result *engine.PlanResult) *llm.TaskPlan {
 	}
 }
 
+func convertEngineChecks(checks []engine.Check) []llm.CheckItem {
+	if len(checks) == 0 {
+		return nil
+	}
+	items := make([]llm.CheckItem, 0, len(checks))
+	for _, c := range checks {
+		items = append(items, llm.CheckItem{
+			ID:          c.ID,
+			Description: c.Description,
+			Command:     c.Command,
+			Type:        c.Type,
+		})
+	}
+	return items
+}
+
 func convertStoredPlanToEnginePlan(plan storedPlan) *engine.PlanResult {
 	result := &engine.PlanResult{}
 	source := plan.Plan
@@ -1119,27 +1144,61 @@ func convertStoredPlanToEnginePlan(plan storedPlan) *engine.PlanResult {
 		result.Confidence = source.Confidence
 		result.Summary = strings.TrimSpace(source.Notes)
 		for _, task := range source.Tasks {
-			result.Tasks = append(result.Tasks, engine.PlanTask{
+			pt := engine.PlanTask{
 				ID:           strings.TrimSpace(task.ID),
 				Title:        strings.TrimSpace(task.Title),
 				Description:  strings.TrimSpace(task.Description),
 				BranchName:   strings.TrimSpace(task.BranchName),
 				Dependencies: append([]string(nil), task.DependsOn...),
-			})
+			}
+			if strings.TrimSpace(task.Briefing) != "" {
+				pt.Briefing = strings.TrimSpace(task.Briefing)
+			}
+			if strings.TrimSpace(task.ExecutionPrompt) != "" {
+				pt.ExecutionPrompt = strings.TrimSpace(task.ExecutionPrompt)
+			}
+			pt.AutomatedChecklist = convertLLMChecksToEngine(task.AutomatedChecklist)
+			pt.UserChecklist = convertLLMChecksToEngine(task.UserChecklist)
+			result.Tasks = append(result.Tasks, pt)
 		}
 		return result
 	}
 
 	for _, task := range plan.Tasks {
-		result.Tasks = append(result.Tasks, engine.PlanTask{
+		pt := engine.PlanTask{
 			ID:           strings.TrimSpace(task.Task.ID),
 			Title:        strings.TrimSpace(task.Task.Title),
 			Description:  strings.TrimSpace(task.Task.Description),
 			BranchName:   strings.TrimSpace(task.Task.BranchName),
 			Dependencies: append([]string(nil), task.Task.DependsOn...),
-		})
+		}
+		if strings.TrimSpace(task.Task.Briefing) != "" {
+			pt.Briefing = strings.TrimSpace(task.Task.Briefing)
+		}
+		if strings.TrimSpace(task.Task.ExecutionPrompt) != "" {
+			pt.ExecutionPrompt = strings.TrimSpace(task.Task.ExecutionPrompt)
+		}
+		pt.AutomatedChecklist = convertLLMChecksToEngine(task.Task.AutomatedChecklist)
+		pt.UserChecklist = convertLLMChecksToEngine(task.Task.UserChecklist)
+		result.Tasks = append(result.Tasks, pt)
 	}
 	return result
+}
+
+func convertLLMChecksToEngine(items []llm.CheckItem) []engine.Check {
+	if len(items) == 0 {
+		return nil
+	}
+	checks := make([]engine.Check, 0, len(items))
+	for _, item := range items {
+		checks = append(checks, engine.Check{
+			ID:          item.ID,
+			Description: item.Description,
+			Command:     item.Command,
+			Type:        item.Type,
+		})
+	}
+	return checks
 }
 
 func cloneTaskPlan(plan *llm.TaskPlan) *llm.TaskPlan {
@@ -1163,8 +1222,21 @@ func cloneTaskPlan(plan *llm.TaskPlan) *llm.TaskPlan {
 			DependsOn:          append([]string(nil), task.DependsOn...),
 			Complexity:         task.Complexity,
 			BranchName:         task.BranchName,
+			Briefing:           task.Briefing,
+			ExecutionPrompt:    task.ExecutionPrompt,
+			AutomatedChecklist: cloneCheckItems(task.AutomatedChecklist),
+			UserChecklist:      cloneCheckItems(task.UserChecklist),
 		})
 	}
+	return cloned
+}
+
+func cloneCheckItems(items []llm.CheckItem) []llm.CheckItem {
+	if items == nil {
+		return nil
+	}
+	cloned := make([]llm.CheckItem, len(items))
+	copy(cloned, items)
 	return cloned
 }
 
