@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zyrakk/hivemind/internal/checklist"
+	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 )
 
@@ -73,63 +74,119 @@ func TruncateTelegramMessage(text string) string {
 	return string(runes[:keep]) + suffix
 }
 
+func codeBlock(content string) string {
+	return "```\n" + content + "\n```"
+}
+
 func FormatNeedsInputMessage(projectID, question, approvalID string) string {
-	lines := []string{
-		fmt.Sprintf("◐ %s: %s", projectID, question),
-		fmt.Sprintf("Reply with /approve %s or /reject %s {reason}", approvalID, approvalID),
-		"Or reply directly with free text.",
-	}
-	return formatEscapedLines(lines...)
+	var box strings.Builder
+	box.WriteString("┌─ INPUT NEEDED ─────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectID))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ ◐ %s\n", question))
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", approvalID))
+	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/reject %s {reason}", approvalID))
+	msg += "\n" + EscapeMarkdownV2("Or reply directly with free text.")
+
+	return TruncateTelegramMessage(msg)
 }
 
 func FormatPRReadyMessage(projectID, branch, approvalID string, autoResults []CheckResult, userChecks []UserCheck) string {
-	lines := []string{
-		EscapeMarkdownV2(fmt.Sprintf("◎ %s: PR ready for review", projectID)),
-		EscapeMarkdownV2(fmt.Sprintf("Branch: %s", branch)),
-		EscapeMarkdownV2(fmt.Sprintf("Reply with /approve %s or /reject %s {reason}", approvalID, approvalID)),
+	passed := 0
+	for _, r := range autoResults {
+		if r.Passed {
+			passed++
+		}
 	}
-	return TruncateTelegramMessage(strings.Join(compactLines(lines), "\n"))
+
+	var box strings.Builder
+	box.WriteString("┌─ PR READY ─────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectID))
+	box.WriteString(fmt.Sprintf("│ Branch:  %s\n", branch))
+	if len(autoResults) > 0 {
+		box.WriteString("├────────────────────────────\n")
+		box.WriteString(fmt.Sprintf("│ ✓ Automated: %d/%d\n", passed, len(autoResults)))
+		for _, r := range autoResults {
+			icon := "✓"
+			if !r.Passed {
+				icon = "✗"
+			}
+			cmd := r.Command
+			if cmd == "" {
+				cmd = r.Description
+			}
+			box.WriteString(fmt.Sprintf("│   %s %s\n", icon, cmd))
+		}
+	}
+	if len(userChecks) > 0 {
+		box.WriteString("├────────────────────────────\n")
+		box.WriteString("│ Manual review required:\n")
+		for _, c := range userChecks {
+			box.WriteString(fmt.Sprintf("│   ◐ %s\n", c.Description))
+		}
+	}
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", approvalID))
+
+	return TruncateTelegramMessage(msg)
 }
 
 func FormatWorkerFailedMessage(projectID, taskTitle, errMsg string) string {
-	lines := []string{
-		fmt.Sprintf("! %s: worker failed on '%s'", projectID, taskTitle),
-		fmt.Sprintf("Error: %s", errMsg),
-		"The orchestrator will attempt to resolve automatically.",
-	}
-	return formatEscapedLines(lines...)
+	var box strings.Builder
+	box.WriteString("┌─ WORKER FAILED ────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectID))
+	box.WriteString(fmt.Sprintf("│ Task:    %s\n", taskTitle))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ ✗ %s\n", errMsg))
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatTaskCompletedMessage(projectID, taskTitle string) string {
-	return formatEscapedLines(fmt.Sprintf("✓ %s: '%s' completed", projectID, taskTitle))
+	return TruncateTelegramMessage(codeBlock(fmt.Sprintf(
+		"┌─ TASK DONE ────────────────\n│ ✓ %s │ %s\n└────────────────────────────",
+		projectID, taskTitle)))
 }
 
 func FormatConsultantUsedMessage(consultantName, question, summary string) string {
-	lines := []string{
-		fmt.Sprintf("→ Consulted %s:", consultantName),
-		fmt.Sprintf("Question: %s", question),
-		fmt.Sprintf("Response: %s", summary),
-	}
-	return formatEscapedLines(lines...)
+	var box strings.Builder
+	box.WriteString("┌─ CONSULTANT ───────────────\n")
+	box.WriteString(fmt.Sprintf("│ → %s\n", consultantName))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Q: %s\n", question))
+	box.WriteString(fmt.Sprintf("│ A: %s\n", summary))
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatBudgetWarningMessage(consultantName string, percentUsed float64) string {
-	return formatEscapedLines(fmt.Sprintf("‼ Budget %s: %.1f%% used this month", consultantName, percentUsed))
+	return TruncateTelegramMessage(codeBlock(fmt.Sprintf(
+		"┌─ BUDGET ALERT ─────────────\n│ ● %s: %.1f%% used\n└────────────────────────────",
+		consultantName, percentUsed)))
 }
 
 func FormatStatusMessage(global state.GlobalState) string {
-	lines := []string{"▸ Hivemind Status"}
-	for _, project := range global.Projects {
-		lines = append(lines, formatProjectSummaryLine(project))
-	}
-	lines = append(lines, "---")
-	lines = append(lines, fmt.Sprintf(
-		"Workers: %d active | Tasks: %d pending | PRs: %d",
+	var box strings.Builder
+	box.WriteString("┌─ HIVEMIND STATUS ──────────\n")
+	box.WriteString(fmt.Sprintf("│ Workers: %d │ Tasks: %d │ PRs: %d\n",
 		global.Counters.ActiveWorkers,
 		global.Counters.PendingTasks,
-		global.Counters.PendingReview,
-	))
-	return formatEscapedLines(lines...)
+		global.Counters.PendingReview))
+	box.WriteString("├────────────────────────────\n")
+	for _, project := range global.Projects {
+		box.WriteString(formatProjectSummaryLine(project))
+		box.WriteString("\n")
+	}
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatProjectDetailMessage(detail state.ProjectDetail) string {
@@ -146,19 +203,23 @@ func FormatProjectDetailMessage(detail state.ProjectDetail) string {
 	}
 
 	progress := int(detail.Progress.Overall * 100)
-	lines := []string{
-		fmt.Sprintf("▸ Project %s", detail.ProjectRef),
-		fmt.Sprintf("Status: %s", detail.Project.Status),
-		fmt.Sprintf("Tasks in progress: %d", inProgress),
-		fmt.Sprintf("Last event: %s", lastEvent),
-		fmt.Sprintf("Progress: %d%%", progress),
-	}
-	return formatEscapedLines(lines...)
+
+	var box strings.Builder
+	box.WriteString("┌─ PROJECT ──────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Name:     %s\n", detail.ProjectRef))
+	box.WriteString(fmt.Sprintf("│ Status:   %s\n", detail.Project.Status))
+	box.WriteString(fmt.Sprintf("│ Tasks:    %d in progress\n", inProgress))
+	box.WriteString(fmt.Sprintf("│ Progress: %d%%\n", progress))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Last: %s\n", lastEvent))
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) string {
 	if len(approvals) == 0 {
-		return formatEscapedLines("▸ Pending approvals: none")
+		return codeBlock("┌─ PENDING ──────────────────\n│ No pending approvals\n└────────────────────────────")
 	}
 
 	sorted := make([]*PendingApproval, 0, len(approvals))
@@ -171,38 +232,110 @@ func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) 
 		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 	})
 
-	lines := []string{"▸ Pending approvals:"}
+	var box strings.Builder
+	box.WriteString("┌─ PENDING ──────────────────\n")
 	for idx, approval := range sorted {
-		line := fmt.Sprintf(
-			"%d. %s (%s) %s — %s [%s]",
+		box.WriteString(fmt.Sprintf("│ %d. %s (%s) %s\n│    %s [%s]\n",
 			idx+1,
 			approval.ID,
 			approval.Type,
 			approval.ProjectID,
 			approval.Description,
 			formatRemaining(approval.ExpiresAt.Sub(now)),
-		)
-		lines = append(lines, line)
+		))
 	}
+	box.WriteString("└────────────────────────────")
 
-	return formatEscapedLines(lines...)
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatHelpMessage() string {
-	lines := []string{
-		"▸ Hivemind Commands",
-		"/status — global overview",
-		"/project {name} — project detail",
-		"/run {project} {directive} — submit new work",
-		"/approve {id} — approve plan/PR/input",
-		"/reject {id} {reason} — reject with feedback",
-		"/pause {project} — pause project workers",
-		"/resume {project} — resume project",
-		"/consult {question} — query Claude/Gemini",
-		"/pending — list active approvals",
-		"/help — this message",
+	var box strings.Builder
+	box.WriteString("┌─ HIVEMIND COMMANDS ────────\n")
+	box.WriteString("│ /status      global overview\n")
+	box.WriteString("│ /project {n} project detail\n")
+	box.WriteString("│ /run {p} {d} submit new work\n")
+	box.WriteString("│ /approve {id} approve item\n")
+	box.WriteString("│ /reject {id}  reject + reason\n")
+	box.WriteString("│ /pause {p}   pause project\n")
+	box.WriteString("│ /resume {p}  resume project\n")
+	box.WriteString("│ /consult {q} query LLM\n")
+	box.WriteString("│ /pending     active approvals\n")
+	box.WriteString("│ /help        this message\n")
+	box.WriteString("└────────────────────────────")
+
+	return codeBlock(box.String())
+}
+
+func FormatPlanMessage(projectRef string, result *planner.PlanResult) string {
+	if result == nil || result.Plan == nil {
+		return codeBlock("┌─ PLAN ─────────────────────\n│ ✗ Empty plan result\n└────────────────────────────")
 	}
-	return formatEscapedLines(lines...)
+
+	engineName := strings.TrimSpace(result.Engine)
+	if engineName == "" {
+		engineName = "glm"
+	}
+
+	var box strings.Builder
+	box.WriteString("┌─ PLAN ─────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project:    %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Engine:     %s\n", engineName))
+	box.WriteString(fmt.Sprintf("│ Tasks:      %d\n", len(result.Plan.Tasks)))
+	box.WriteString(fmt.Sprintf("│ Confidence: %.0f%%\n", result.Plan.Confidence*100))
+	if result.ConsultantUsed {
+		box.WriteString("│ ✓ Validated by consultant\n")
+	}
+	box.WriteString("├────────────────────────────\n")
+	for i, task := range result.Plan.Tasks {
+		title := strings.TrimSpace(task.Title)
+		if title == "" {
+			title = fmt.Sprintf("Task %d", i+1)
+		}
+		box.WriteString(fmt.Sprintf("│ %d ▸ %s\n", i+1, title))
+		briefing := strings.TrimSpace(task.Briefing)
+		if briefing == "" {
+			briefing = strings.TrimSpace(task.Description)
+		}
+		if briefing != "" {
+			box.WriteString(fmt.Sprintf("│     %s\n", briefing))
+		}
+		if len(task.DependsOn) > 0 {
+			box.WriteString(fmt.Sprintf("│     Depends on: %s\n", strings.Join(task.DependsOn, ", ")))
+		}
+	}
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/approve %s", result.PlanID))
+	msg += "\n" + EscapeMarkdownV2(fmt.Sprintf("/reject %s {reason}", result.PlanID))
+
+	return TruncateTelegramMessage(msg)
+}
+
+func FormatProgressMessage(project, stage, detail string) string {
+	return EscapeMarkdownV2(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
+}
+
+func FormatEngineSwitchMessage(from, to, reason string) string {
+	var box strings.Builder
+	box.WriteString("┌─ ENGINE SWITCH ────────────\n")
+	box.WriteString(fmt.Sprintf("│ ● %s → %s\n", strings.TrimSpace(from), strings.TrimSpace(to)))
+	box.WriteString(fmt.Sprintf("│   Reason: %s\n", strings.TrimSpace(reason)))
+	box.WriteString("└────────────────────────────")
+
+	return codeBlock(box.String())
+}
+
+func FormatQuotaAlertMessage(dailyUsed, dailyLimit, weeklyUsed, weeklyLimit int) string {
+	var box strings.Builder
+	box.WriteString("┌─ QUOTA ALERT ──────────────\n")
+	box.WriteString(fmt.Sprintf("│ ● Claude Code usage\n"))
+	box.WriteString(fmt.Sprintf("│   Daily:  %d/%d\n", dailyUsed, dailyLimit))
+	box.WriteString(fmt.Sprintf("│   Weekly: %d/%d\n", weeklyUsed, weeklyLimit))
+	box.WriteString("└────────────────────────────")
+
+	return codeBlock(box.String())
 }
 
 func MarkdownV2Link(label, rawURL string) string {
@@ -241,20 +374,26 @@ func compactLines(lines []string) []string {
 }
 
 func formatProjectSummaryLine(project state.ProjectSummary) string {
+	icon := " "
+	status := project.Status
 	switch project.Status {
 	case state.ProjectStatusWorking:
-		return fmt.Sprintf("● %s: %d workers active", project.Name, project.ActiveWorkers)
+		icon = "▸"
+		status = fmt.Sprintf("%d workers", project.ActiveWorkers)
 	case state.ProjectStatusNeedsInput:
-		return fmt.Sprintf("◐ %s: awaiting input", project.Name)
+		icon = "◐"
+		status = "awaiting input"
 	case state.ProjectStatusPendingReview:
-		return fmt.Sprintf("◎ %s: pending review", project.Name)
+		icon = "◐"
+		status = "pending review"
 	case state.ProjectStatusBlocked:
-		return fmt.Sprintf("■ %s: blocked", project.Name)
+		icon = "■"
+		status = "blocked"
 	case state.ProjectStatusPaused:
-		return fmt.Sprintf("‖ %s: paused", project.Name)
-	default:
-		return fmt.Sprintf("  %s: %s", project.Name, project.Status)
+		icon = "‖"
+		status = "paused"
 	}
+	return fmt.Sprintf("│ %s %-14s │ %s", icon, project.Name, status)
 }
 
 func formatRemaining(remaining time.Duration) string {
