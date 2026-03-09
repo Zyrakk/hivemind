@@ -43,6 +43,29 @@ type evalRecon interface {
 	Run(ctx context.Context, commands []string) (*recon.Result, error)
 }
 
+type TaskChecklists struct {
+	AutomatedChecklist []AutomatedCheck `json:"automated_checklist,omitempty"`
+	UserChecklist      []UserCheck      `json:"user_checklist,omitempty"`
+}
+
+type AutomatedCheck struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Command     string `json:"command"`
+	Type        string `json:"type"`
+}
+
+type UserCheck struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+}
+
+type checkResult struct {
+	Check  AutomatedCheck
+	Passed bool
+	Output string
+}
+
 type EvalResult struct {
 	Verdict        string          `json:"verdict"`
 	Evaluation     *llm.Evaluation `json:"evaluation"`
@@ -73,8 +96,9 @@ type Evaluator struct {
 	db          *state.Store
 	logger      *slog.Logger
 
-	mu      sync.Mutex
-	retries map[int64]int
+	mu         sync.Mutex
+	retries    map[int64]int
+	checklists map[int64]TaskChecklists
 }
 
 func New(
@@ -104,7 +128,8 @@ func NewWithDeps(
 		launcher:    launcher,
 		db:          db,
 		logger:      logger,
-		retries:     make(map[int64]int),
+		retries:    make(map[int64]int),
+		checklists: make(map[int64]TaskChecklists),
 	}
 }
 
@@ -138,6 +163,54 @@ func (e *Evaluator) SetRecon(recon evalRecon) {
 	e.recon = recon
 }
 
+func (e *Evaluator) SetTaskChecklists(taskID int64, checklists TaskChecklists) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.checklists == nil {
+		e.checklists = make(map[int64]TaskChecklists)
+	}
+	e.checklists[taskID] = checklists
+}
+
+func (e *Evaluator) getTaskChecklists(taskID int64) (TaskChecklists, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	cl, ok := e.checklists[taskID]
+	return cl, ok
+}
+
+func (e *Evaluator) evaluateWithChecklist(ctx context.Context, checklists TaskChecklists, repoPath string) ([]checkResult, error) {
+	if e.recon == nil {
+		return nil, fmt.Errorf("recon not configured for checklist evaluation")
+	}
+
+	results := make([]checkResult, 0, len(checklists.AutomatedChecklist))
+	for _, check := range checklists.AutomatedChecklist {
+		cmd := strings.TrimSpace(check.Command)
+		if cmd == "" {
+			continue
+		}
+		if repoPath != "" {
+			cmd = fmt.Sprintf("cd %s && %s", shellQuotePath(repoPath), cmd)
+		}
+		runResult, runErr := e.recon.Run(ctx, []string{cmd})
+		passed := runErr == nil && runResult != nil && len(runResult.Errors) == 0
+		output := ""
+		if runResult != nil {
+			output = runResult.Output
+		}
+		if runErr != nil && output == "" {
+			output = runErr.Error()
+		}
+		results = append(results, checkResult{
+			Check:  check,
+			Passed: passed,
+			Output: output,
+		})
+	}
+	return results, nil
+}
+
 func (e *Evaluator) Evaluate(ctx context.Context, diff, criteria string) (*llm.Evaluation, error) {
 	if e == nil || e.glm == nil {
 		return nil, llm.ErrNotImplemented
@@ -169,15 +242,96 @@ func (e *Evaluator) EvaluateWorkerOutput(ctx context.Context, session launcher.S
 		return nil, err
 	}
 
-	diff := strings.TrimSpace(session.Diff)
+	var evaluation *llm.Evaluation
+	var diff string
+
+	// Checklist-based evaluation: runs before engine/GLM to save quota
+	checklists, hasChecklists := e.getTaskChecklists(taskRecord.ID)
+	if hasChecklists && len(checklists.AutomatedChecklist) > 0 && rc != nil {
+		repoPath := resolveRepoPathForEval(projectName, session, launcherWorkDir(e.launcher))
+		checkResults, checkErr := e.evaluateWithChecklist(ctx, checklists, repoPath)
+		if checkErr == nil {
+			allPassed := true
+			var failedChecks []string
+			for _, cr := range checkResults {
+				if !cr.Passed {
+					allPassed = false
+					failedChecks = append(failedChecks, fmt.Sprintf("[%s] %s: %s", cr.Check.ID, cr.Check.Description, cr.Output))
+				}
+			}
+
+			if allPassed && len(checklists.UserChecklist) == 0 {
+				evaluation = &llm.Evaluation{
+					Verdict:      "accept",
+					Confidence:   0.9,
+					Completeness: 0.9,
+					Correctness:  0.9,
+					Conventions:  0.9,
+					ScopeOK:      true,
+					Summary:      fmt.Sprintf("All %d automated checks passed", len(checkResults)),
+				}
+				goto postEval
+			}
+
+			if allPassed && len(checklists.UserChecklist) > 0 {
+				if evalNotifier != nil {
+					var userCheckLines []string
+					for _, uc := range checklists.UserChecklist {
+						userCheckLines = append(userCheckLines, fmt.Sprintf("- %s", uc.Description))
+					}
+					projectRef := strings.TrimSpace(projectName)
+					if projectRef == "" {
+						projectRef = strconv.FormatInt(taskRecord.ProjectID, 10)
+					}
+					question := fmt.Sprintf("Task '%s' passed automated checks. Please verify:\n%s",
+						strings.TrimSpace(taskRecord.Title),
+						strings.Join(userCheckLines, "\n"))
+					approvalID := fmt.Sprintf("input-%d-%d", taskRecord.ProjectID, taskRecord.ID)
+					_ = evalNotifier.NotifyNeedsInput(ctx, projectRef, question, approvalID)
+				}
+				evaluation = &llm.Evaluation{
+					Verdict:      "accept",
+					Confidence:   0.8,
+					Completeness: 0.9,
+					Correctness:  0.9,
+					Conventions:  0.9,
+					ScopeOK:      true,
+					Summary:      fmt.Sprintf("All %d automated checks passed. User checklist sent for review.", len(checkResults)),
+				}
+				goto postEval
+			}
+
+			// Some automated checks failed
+			evaluation = &llm.Evaluation{
+				Verdict:      "iterate",
+				Confidence:   0.8,
+				Completeness: 0.5,
+				Correctness:  0.4,
+				Conventions:  0.9,
+				ScopeOK:      false,
+				Summary:      fmt.Sprintf("%d/%d automated checks failed", len(failedChecks), len(checkResults)),
+			}
+			for _, fc := range failedChecks {
+				evaluation.Issues = append(evaluation.Issues, llm.Issue{
+					Severity:    "high",
+					Description: fc,
+					Suggestion:  "Fix the failing check",
+				})
+			}
+			goto postEval
+		}
+		// If checklist eval errored, fall through to engine/GLM evaluation
+		e.logger.Warn("checklist evaluation failed, falling back to engine eval",
+			slog.String("error", checkErr.Error()))
+	}
+
+	diff = strings.TrimSpace(session.Diff)
 	if diff == "" {
 		diff, err = e.collectDiff(session.Branch)
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	var evaluation *llm.Evaluation
 	if eng != nil {
 		var buildOut, testOut, vetOut string
 		if rc != nil {
