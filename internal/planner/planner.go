@@ -383,7 +383,7 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 						ProjectID:     plan.ProjectID,
 						ID:            s.task.Task.ID,
 						Title:         s.task.Task.Title,
-						Description:   s.task.Task.Description,
+						Description:   effectiveWorkerPrompt(s.task.Task),
 						BranchName:    s.task.Task.BranchName,
 						FilesAffected: append([]string(nil), s.task.Task.FilesAffected...),
 					}, plan.AgentsMD, plan.Cache)
@@ -881,6 +881,13 @@ func fallbackTaskTitle(task llm.Task, idx int) string {
 		return "Task " + strings.TrimSpace(task.ID)
 	}
 	return fmt.Sprintf("Task %d", idx+1)
+}
+
+func effectiveWorkerPrompt(task llm.Task) string {
+	if ep := strings.TrimSpace(task.ExecutionPrompt); ep != "" {
+		return ep
+	}
+	return strings.TrimSpace(task.Description)
 }
 
 func complexityToPriority(complexity string) int {
