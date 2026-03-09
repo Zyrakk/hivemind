@@ -123,6 +123,12 @@ func (b plannerEvaluatorBridge) HandleWorkerCompletionDetailed(ctx context.Conte
 	return b.evaluator.HandleWorkerCompletionDetailed(ctx, sessionID)
 }
 
+func (b plannerEvaluatorBridge) SetTaskChecklists(taskID int64, checklists evaluator.TaskChecklists) {
+	if b.evaluator != nil {
+		b.evaluator.SetTaskChecklists(taskID, checklists)
+	}
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
