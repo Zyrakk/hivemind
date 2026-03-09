@@ -386,8 +386,6 @@ func (t *TelegramBot) NotifyProgress(ctx context.Context, project, taskID, stage
 	displayDetail := detail
 
 	switch stage {
-	case "launching":
-		displayStage = "launching"
 	case "worker-started":
 		displayStage = "worker started"
 	case "codex-executing":

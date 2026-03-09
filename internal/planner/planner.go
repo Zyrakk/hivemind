@@ -395,11 +395,15 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 					if taskTitle == "" {
 						taskTitle = key
 					}
-					p.notifyProgress(ctx, plan.ProjectRef, s.task.Task.ID, "launching", fmt.Sprintf("task %d/%d: %s", indexOf(order, key)+1, len(order), taskTitle))
+					progressTaskID := s.task.Task.ID
+					if s.task.DBTaskID > 0 {
+						progressTaskID = strconv.FormatInt(s.task.DBTaskID, 10)
+					}
+					p.notifyProgress(ctx, plan.ProjectRef, progressTaskID, "launching", fmt.Sprintf("task %d/%d: %s", indexOf(order, key)+1, len(order), taskTitle))
 					session, launchErr := p.launcher.LaunchWorker(ctx, launcher.Task{
 						ProjectID:     plan.ProjectID,
 						ProjectRef:    plan.ProjectRef,
-						ID:            s.task.Task.ID,
+						ID:            progressTaskID,
 						Title:         s.task.Task.Title,
 						Description:   effectiveWorkerPrompt(s.task.Task),
 						BranchName:    s.task.Task.BranchName,
