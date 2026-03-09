@@ -96,6 +96,13 @@ type PlanResult struct {
 	Confidence float64    `json:"confidence"`
 }
 
+type Check struct {
+	ID          string `json:"id"`
+	Description string `json:"description"`
+	Command     string `json:"command,omitempty"`
+	Type        string `json:"type"` // "build", "test", "file_exists", "grep", "manual"
+}
+
 type PlanTask struct {
 	ID           string   `json:"id"`
 	Title        string   `json:"title"`
@@ -105,6 +112,12 @@ type PlanTask struct {
 	Priority     int      `json:"priority"`
 	Type         string   `json:"type"`   // "coding", "qa", "research"
 	Prompt       string   `json:"prompt"` // complete self-contained prompt for Codex worker
+
+	// Artifact fields
+	Briefing           string  `json:"briefing,omitempty"`            // 2-3 sentences for Telegram
+	ExecutionPrompt    string  `json:"execution_prompt,omitempty"`    // precise step-by-step for Codex
+	AutomatedChecklist []Check `json:"automated_checklist,omitempty"` // machine-executable checks
+	UserChecklist      []Check `json:"user_checklist,omitempty"`      // human-only checks (UI/UX, design)
 }
 
 type EvalRequest struct {
