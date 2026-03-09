@@ -935,6 +935,14 @@ func (m *mockPlannerNotifier) NotifyTaskCompleted(ctx context.Context, projectID
 	return nil
 }
 
+func (m *mockPlannerNotifier) NotifyProgress(ctx context.Context, project, stage, detail string) error {
+	_ = ctx
+	_ = project
+	_ = stage
+	_ = detail
+	return nil
+}
+
 func (m *mockPlannerNotifier) completedCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
