@@ -306,6 +306,7 @@ func main() {
 			}
 			plannerService.SetNotifier(telegramNotifier)
 			evaluatorService.SetNotifier(telegramNotifier)
+			launcherService.SetNotifier(telegramNotifier)
 
 			defer func() {
 				if stopErr := telegramNotifier.Stop(); stopErr != nil && !errors.Is(stopErr, notify.ErrBotNotStarted) {
