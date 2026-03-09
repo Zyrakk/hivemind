@@ -338,12 +338,18 @@ func FormatQuotaAlertMessage(dailyUsed, dailyLimit, weeklyUsed, weeklyLimit int)
 	return codeBlock(box.String())
 }
 
+const (
+	ProgressStatusDone   = "done"
+	ProgressStatusActive = "active"
+	ProgressStatusFailed = "failed"
+)
+
 // ProgressEntry represents a single stage in the progress timeline.
 type ProgressEntry struct {
 	Stage  string
 	Detail string
-	Status string // "done", "active", "failed"
-	Time   time.Time
+	Status string // ProgressStatusDone, ProgressStatusActive, ProgressStatusFailed
+	Time   time.Time // recorded for elapsed-time display in future iterations
 }
 
 // ProgressTimeline tracks the full progress state for a single task.
@@ -370,9 +376,9 @@ func RenderProgressTimeline(tl *ProgressTimeline) string {
 	for _, entry := range tl.Entries {
 		icon := "▸"
 		switch entry.Status {
-		case "done":
+		case ProgressStatusDone:
 			icon = "✓"
-		case "failed":
+		case ProgressStatusFailed:
 			icon = "✗"
 		}
 		line := fmt.Sprintf("│ %s %s", icon, entry.Stage)
