@@ -348,7 +348,7 @@ func (t *TelegramBot) NotifyProgress(ctx context.Context, project, stage, detail
 	t.lastProgressAt[key] = now
 	t.progressMu.Unlock()
 
-	message := formatEscapedLines(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
+	message := FormatProgressMessage(project, stage, detail)
 	return t.sendSilentMessage(message)
 }
 
@@ -367,14 +367,7 @@ func (t *TelegramBot) NotifyEngineSwitch(from, to, reason string) {
 	if t == nil {
 		return
 	}
-	if err := t.enqueueMessage(context.Background(), formatEscapedLines(
-		fmt.Sprintf(
-			"▸ Engine switch: %s → %s. Reason: %s",
-			strings.TrimSpace(from),
-			strings.TrimSpace(to),
-			strings.TrimSpace(reason),
-		),
-	)); err != nil && !errors.Is(err, ErrNotifierNotRunning) {
+	if err := t.enqueueMessage(context.Background(), FormatEngineSwitchMessage(from, to, reason)); err != nil && !errors.Is(err, ErrNotifierNotRunning) {
 		if t.logger != nil {
 			t.logger.Warn("engine switch notification failed", slog.Any("error", err))
 		}
@@ -681,7 +674,7 @@ func (t *TelegramBot) cmdRun(ctx context.Context, args string) (string, error) {
 		return formatEscapedLines(sb.String()), nil
 	}
 
-	summary := formatPlanSummary(projectRef, planResult)
+	summary := FormatPlanMessage(projectRef, planResult)
 	t.RegisterPendingApproval(PendingApproval{
 		ID:          planResult.PlanID,
 		Type:        "plan",
@@ -928,45 +921,6 @@ func (t *TelegramBot) cmdPending(ctx context.Context) string {
 	return FormatPendingApprovalsMessage(t.listApprovals(), now)
 }
 
-func formatPlanSummary(projectRef string, result *planner.PlanResult) string {
-	if result == nil || result.Plan == nil {
-		return formatEscapedLines("✗ Empty plan result.")
-	}
-
-	engineName := strings.TrimSpace(result.Engine)
-	if engineName == "" {
-		engineName = "glm"
-	}
-
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("▸ Plan for %s [engine: %s] (%d tasks):\n", projectRef, engineName, len(result.Plan.Tasks)))
-	sb.WriteString(fmt.Sprintf("Confidence: %.0f%%\n", result.Plan.Confidence*100))
-	if result.ConsultantUsed {
-		sb.WriteString("→ Validated by consultant\n")
-	}
-	sb.WriteString("\n")
-
-	for i, task := range result.Plan.Tasks {
-		title := strings.TrimSpace(task.Title)
-		if title == "" {
-			title = fmt.Sprintf("Task %d", i+1)
-		}
-		briefing := strings.TrimSpace(task.Briefing)
-		if briefing == "" {
-			briefing = strings.TrimSpace(task.Description)
-		}
-		sb.WriteString(fmt.Sprintf("%d. %s\n   %s\n", i+1, title, briefing))
-		if len(task.DependsOn) > 0 {
-			sb.WriteString(fmt.Sprintf("   Depends on: %s\n", strings.Join(task.DependsOn, ", ")))
-		}
-	}
-
-	sb.WriteString(fmt.Sprintf("\n/approve %s — execute this plan", result.PlanID))
-	sb.WriteString(fmt.Sprintf("\n/reject %s {reason} — discard", result.PlanID))
-
-	return formatEscapedLines(sb.String())
-}
-
 func parseDirectiveRoutingFromArgs(args string) (directive, projectRef string, hasRouting bool) {
 	return directivepkg.ParseRouting(args)
 }
@@ -1097,7 +1051,7 @@ func (t *TelegramBot) rejectPlan(ctx context.Context, approval *PendingApproval,
 		AcceptsText: false,
 	})
 
-	return t.enqueueMessage(ctx, formatPlanSummary(approval.ProjectID, rebuilt))
+	return t.enqueueMessage(ctx, FormatPlanMessage(approval.ProjectID, rebuilt))
 }
 
 func (t *TelegramBot) resolveInputWithoutText(ctx context.Context, approval *PendingApproval) error {
