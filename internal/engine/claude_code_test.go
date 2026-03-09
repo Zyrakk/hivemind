@@ -410,6 +410,57 @@ func TestAvailableBinaryNotFound(t *testing.T) {
 	}
 }
 
+func TestValidatePlanResult_ExecutionPromptAccepted(t *testing.T) {
+	result := &PlanResult{
+		Tasks: []PlanTask{
+			{
+				ID:              "task-001",
+				Title:           "Test task",
+				ExecutionPrompt: "Step 1: do this. Step 2: do that.",
+			},
+		},
+	}
+	if err := validatePlanResult(result); err != nil {
+		t.Fatalf("expected no error for task with ExecutionPrompt, got: %v", err)
+	}
+	// Verify backfill
+	if result.Tasks[0].Prompt != "Step 1: do this. Step 2: do that." {
+		t.Fatalf("expected Prompt to be backfilled from ExecutionPrompt, got: %q", result.Tasks[0].Prompt)
+	}
+}
+
+func TestValidatePlanResult_NeitherPromptNorExecution(t *testing.T) {
+	result := &PlanResult{
+		Tasks: []PlanTask{
+			{
+				ID:    "task-001",
+				Title: "Test task",
+			},
+		},
+	}
+	if err := validatePlanResult(result); err == nil {
+		t.Fatal("expected error for task with neither prompt nor execution_prompt")
+	}
+}
+
+func TestValidatePlanResult_BackfillExecutionPromptFromPrompt(t *testing.T) {
+	result := &PlanResult{
+		Tasks: []PlanTask{
+			{
+				ID:     "task-001",
+				Title:  "Test task",
+				Prompt: "Do the thing",
+			},
+		},
+	}
+	if err := validatePlanResult(result); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Tasks[0].ExecutionPrompt != "Do the thing" {
+		t.Fatalf("expected ExecutionPrompt to be backfilled from Prompt, got: %q", result.Tasks[0].ExecutionPrompt)
+	}
+}
+
 func assertContains(t *testing.T, got, want string) {
 	t.Helper()
 

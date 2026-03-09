@@ -622,15 +622,23 @@ func validatePlanResult(result *PlanResult) error {
 		return errors.New("plan result has no tasks")
 	}
 
-	for idx, task := range result.Tasks {
+	for idx := range result.Tasks {
+		task := &result.Tasks[idx]
 		if strings.TrimSpace(task.ID) == "" {
 			return fmt.Errorf("plan task[%d] missing id", idx)
 		}
 		if strings.TrimSpace(task.Title) == "" {
 			return fmt.Errorf("plan task[%d] missing title", idx)
 		}
+		if strings.TrimSpace(task.Prompt) == "" && strings.TrimSpace(task.ExecutionPrompt) == "" {
+			return fmt.Errorf("plan task[%d] missing prompt or execution_prompt", idx)
+		}
+		// Backfill for backward compat
 		if strings.TrimSpace(task.Prompt) == "" {
-			return fmt.Errorf("plan task[%d] missing prompt", idx)
+			task.Prompt = strings.TrimSpace(task.ExecutionPrompt)
+		}
+		if strings.TrimSpace(task.ExecutionPrompt) == "" {
+			task.ExecutionPrompt = strings.TrimSpace(task.Prompt)
 		}
 	}
 
