@@ -373,23 +373,37 @@ func RenderProgressTimeline(tl *ProgressTimeline) string {
 		box.WriteString(fmt.Sprintf("│ branch: %s\n", tl.Branch))
 	}
 	box.WriteString("├────────────────────────────\n")
-	for _, entry := range tl.Entries {
-		icon := "▸"
-		switch entry.Status {
-		case ProgressStatusDone:
-			icon = "✓"
-		case ProgressStatusFailed:
-			icon = "✗"
-		}
-		line := fmt.Sprintf("│ %s %s", icon, entry.Stage)
-		if entry.Detail != "" {
-			line += fmt.Sprintf(" (%s)", entry.Detail)
-		}
-		box.WriteString(line + "\n")
-	}
-	box.WriteString("└────────────────────────────")
 
-	return TruncateTelegramMessage(codeBlock(box.String()))
+	footer := "└────────────────────────────"
+	// code block adds "```\n" (4) + "\n```" (4) = 8 chars
+	overhead := len([]rune(footer)) + 8
+
+	for _, entry := range tl.Entries {
+		line := renderProgressEntry(entry)
+		if len([]rune(box.String()))+len([]rune(line))+overhead > telegramMessageLimit {
+			box.WriteString("│ … earlier entries omitted\n")
+			break
+		}
+		box.WriteString(line)
+	}
+	box.WriteString(footer)
+
+	return codeBlock(box.String())
+}
+
+func renderProgressEntry(entry ProgressEntry) string {
+	icon := "▸"
+	switch entry.Status {
+	case ProgressStatusDone:
+		icon = "✓"
+	case ProgressStatusFailed:
+		icon = "✗"
+	}
+	line := fmt.Sprintf("│ %s %s", icon, entry.Stage)
+	if entry.Detail != "" {
+		line += fmt.Sprintf(" (%s)", entry.Detail)
+	}
+	return line + "\n"
 }
 
 func formatEscapedLines(lines ...string) string {

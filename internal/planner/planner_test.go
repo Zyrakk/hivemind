@@ -177,8 +177,9 @@ func TestExecutePlanRespectsDependencies(t *testing.T) {
 	if len(order) != 2 {
 		t.Fatalf("expected 2 launched tasks, got %d", len(order))
 	}
-	if order[0] != "task-a" || order[1] != "task-b" {
-		t.Fatalf("expected launch order [task-a task-b], got %v", order)
+	// DB task IDs are auto-increment; first task gets "1", second gets "2".
+	if order[0] != "1" || order[1] != "2" {
+		t.Fatalf("expected launch order [1 2], got %v", order)
 	}
 
 	detail, err := store.GetProjectDetail(context.Background(), "flux")
