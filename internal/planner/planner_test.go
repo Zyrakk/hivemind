@@ -850,6 +850,8 @@ func (m *mockPlanEvaluator) HandleWorkerCompletionDetailed(ctx context.Context, 
 	return &evaluator.CompletionResult{Action: "escalate"}, nil
 }
 
+func (m *mockPlanEvaluator) SetTaskChecklists(taskID int64, checklists evaluator.TaskChecklists) {}
+
 func (m *mockPlanEvaluator) calls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

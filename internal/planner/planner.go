@@ -41,6 +41,7 @@ type plannerLauncher interface {
 type planEvaluator interface {
 	EvaluateWorkerOutput(ctx context.Context, session launcher.Session) (*evaluator.EvalResult, error)
 	HandleWorkerCompletionDetailed(ctx context.Context, sessionID string) (*evaluator.CompletionResult, error)
+	SetTaskChecklists(taskID int64, checklists evaluator.TaskChecklists)
 }
 
 type plannerEngine interface {
@@ -841,6 +842,10 @@ func (p *Planner) persistTasks(ctx context.Context, projectID int64, plan *llm.T
 		return nil, fmt.Errorf("plan is nil")
 	}
 
+	p.mu.Lock()
+	eval := p.evaluator
+	p.mu.Unlock()
+
 	result := make([]plannedTask, 0, len(plan.Tasks))
 	for i, task := range plan.Tasks {
 		entry := plannedTask{Task: task}
@@ -864,6 +869,26 @@ func (p *Planner) persistTasks(ctx context.Context, projectID int64, plan *llm.T
 				return nil, fmt.Errorf("create db task %q: %w", task.ID, createErr)
 			}
 			entry.DBTaskID = taskID
+
+			// Register checklists with evaluator
+			if eval != nil && (len(task.AutomatedChecklist) > 0 || len(task.UserChecklist) > 0) {
+				cl := evaluator.TaskChecklists{}
+				for _, ac := range task.AutomatedChecklist {
+					cl.AutomatedChecklist = append(cl.AutomatedChecklist, evaluator.AutomatedCheck{
+						ID:          ac.ID,
+						Description: ac.Description,
+						Command:     ac.Command,
+						Type:        ac.Type,
+					})
+				}
+				for _, uc := range task.UserChecklist {
+					cl.UserChecklist = append(cl.UserChecklist, evaluator.UserCheck{
+						ID:          uc.ID,
+						Description: uc.Description,
+					})
+				}
+				eval.SetTaskChecklists(taskID, cl)
+			}
 		}
 
 		result = append(result, entry)
