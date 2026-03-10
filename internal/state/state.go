@@ -1054,6 +1054,43 @@ func isValidPlanStatus(status string) bool {
 	}
 }
 
+// RecoverFromRestart detects zombie states left by a process crash and
+// transitions them to safe states. Returns the count of recovered items.
+func (s *Store) RecoverFromRestart(ctx context.Context) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	recovered := 0
+	now := formatTime(nowUTC())
+
+	// 1. Plans stuck in "executing" → "failed".
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE plans SET status = ?, updated_at = ? WHERE status = ?`,
+		PlanStatusFailed, now, PlanStatusExecuting,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("recover executing plans: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		recovered += int(n)
+	}
+
+	// 2. Workers stuck in "running" → "failed".
+	res, err = s.db.ExecContext(ctx,
+		`UPDATE workers SET status = ?, finished_at = ?, error_message = ? WHERE status = ?`,
+		WorkerStatusFailed, now, "process restarted", WorkerStatusRunning,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("recover running workers: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		recovered += int(n)
+	}
+
+	return recovered, nil
+}
+
 func (s *Store) Close() error {
 	if s.db != nil {
 		return s.db.Close()
