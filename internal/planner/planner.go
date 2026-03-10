@@ -385,6 +385,26 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 	var mapMu sync.Mutex
 
 	for {
+		// Check for cancellation before evaluating next batch of tasks.
+		select {
+		case <-ctx.Done():
+			if p.db != nil {
+				_ = p.db.UpdatePlanStatus(ctx, planID, state.PlanStatusCancelled)
+			}
+			for _, key := range order {
+				s := states[key]
+				if s.status == state.TaskStatusPending {
+					s.status = state.TaskStatusFailed
+					if p.db != nil && s.task.DBTaskID > 0 {
+						failedStatus := state.TaskStatusFailed
+						_ = p.db.UpdateTask(ctx, s.task.DBTaskID, state.TaskUpdate{Status: &failedStatus})
+					}
+				}
+			}
+			return ctx.Err()
+		default:
+		}
+
 		allDone := true
 		for _, key := range order {
 			s := states[key]
@@ -515,6 +535,9 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 		for {
 			select {
 			case <-ctx.Done():
+				if p.db != nil {
+					_ = p.db.UpdatePlanStatus(ctx, planID, state.PlanStatusCancelled)
+				}
 				return ctx.Err()
 			case session := <-p.launcher.WorkerDone():
 				mapMu.Lock()
