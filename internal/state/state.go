@@ -46,6 +46,15 @@ const (
 	TaskStatusRejected   = "rejected"
 )
 
+const (
+	PlanStatusPending   = "pending"
+	PlanStatusApproved  = "approved"
+	PlanStatusExecuting = "executing"
+	PlanStatusCompleted = "completed"
+	PlanStatusFailed    = "failed"
+	PlanStatusCancelled = "cancelled"
+)
+
 type Project struct {
 	ID           int64
 	Name         string
@@ -89,6 +98,18 @@ type Event struct {
 	EventType   string
 	Description string
 	Timestamp   time.Time
+}
+
+type Plan struct {
+	ID        string
+	ProjectID int64
+	Directive string
+	Status    string
+	Engine    string
+	Summary   string
+	PlanData  []byte
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type ProjectSummary struct {
@@ -861,6 +882,176 @@ func (s *Store) UpdateWorker(ctx context.Context, workerID int64, update WorkerU
 	}
 
 	return nil
+}
+
+func (s *Store) CreatePlan(ctx context.Context, projectID int64, planID, directive, engine string, planData []byte) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if strings.TrimSpace(planID) == "" {
+		return fmt.Errorf("plan ID is required: %w", ErrInvalidInput)
+	}
+	if projectID <= 0 {
+		return fmt.Errorf("project_id is required: %w", ErrInvalidInput)
+	}
+
+	now := formatTime(nowUTC())
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO plans (id, project_id, directive, status, engine, plan_data, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		planID, projectID, directive, PlanStatusPending, engine, string(planData), now, now,
+	)
+	if err != nil {
+		return fmt.Errorf("insert plan: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetPlan(ctx context.Context, planID string) (*Plan, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	var (
+		plan       Plan
+		createdRaw any
+		updatedRaw any
+		planData   string
+	)
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, project_id, directive, status, engine, summary, plan_data, created_at, updated_at
+		 FROM plans WHERE id = ?`, planID,
+	).Scan(&plan.ID, &plan.ProjectID, &plan.Directive, &plan.Status, &plan.Engine,
+		&plan.Summary, &planData, &createdRaw, &updatedRaw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("plan %q: %w", planID, ErrNotFound)
+		}
+		return nil, fmt.Errorf("get plan: %w", err)
+	}
+
+	plan.PlanData = []byte(planData)
+
+	createdAt, parseErr := parseTimeValue(createdRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	updatedAt, parseErr := parseTimeValue(updatedRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	plan.CreatedAt = createdAt
+	plan.UpdatedAt = updatedAt
+
+	return &plan, nil
+}
+
+func (s *Store) UpdatePlanStatus(ctx context.Context, planID, status string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if !isValidPlanStatus(status) {
+		return fmt.Errorf("plan status %q: %w", status, ErrInvalidStatus)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE plans SET status = ?, updated_at = ? WHERE id = ?`,
+		status, formatTime(nowUTC()), planID,
+	)
+	if err != nil {
+		return fmt.Errorf("update plan status: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (plan status): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdatePlanData(ctx context.Context, planID string, planData []byte) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE plans SET plan_data = ?, updated_at = ? WHERE id = ?`,
+		string(planData), formatTime(nowUTC()), planID,
+	)
+	if err != nil {
+		return fmt.Errorf("update plan data: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (plan data): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetActivePlans(ctx context.Context) ([]Plan, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, directive, status, engine, summary, plan_data, created_at, updated_at
+		 FROM plans WHERE status IN (?, ?)
+		 ORDER BY created_at ASC`,
+		PlanStatusApproved, PlanStatusExecuting,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list active plans: %w", err)
+	}
+	defer rows.Close()
+
+	plans := make([]Plan, 0)
+	for rows.Next() {
+		var (
+			plan       Plan
+			planData   string
+			createdRaw any
+			updatedRaw any
+		)
+		if scanErr := rows.Scan(&plan.ID, &plan.ProjectID, &plan.Directive,
+			&plan.Status, &plan.Engine, &plan.Summary, &planData,
+			&createdRaw, &updatedRaw); scanErr != nil {
+			return nil, fmt.Errorf("scan plan: %w", scanErr)
+		}
+		plan.PlanData = []byte(planData)
+		createdAt, parseErr := parseTimeValue(createdRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		updatedAt, parseErr := parseTimeValue(updatedRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		plan.CreatedAt = createdAt
+		plan.UpdatedAt = updatedAt
+		plans = append(plans, plan)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active plans: %w", err)
+	}
+	return plans, nil
+}
+
+func isValidPlanStatus(status string) bool {
+	switch status {
+	case PlanStatusPending, PlanStatusApproved, PlanStatusExecuting,
+		PlanStatusCompleted, PlanStatusFailed, PlanStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Store) Close() error {

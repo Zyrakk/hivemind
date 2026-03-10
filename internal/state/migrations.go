@@ -112,8 +112,25 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assigned_worker_id ON tasks(assigned_worker
 PRAGMA foreign_keys = ON;
 `
 
+const migrationAddPlansTable = `
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    directive TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','approved','executing','completed','failed','cancelled')),
+    engine TEXT NOT NULL DEFAULT '',
+    summary TEXT DEFAULT '',
+    plan_data TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_plans_project_id ON plans(project_id);
+CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
+`
+
 func Migrations() []string {
-	return []string{SchemaSQL, migrationAddRejectedCancelled}
+	return []string{SchemaSQL, migrationAddRejectedCancelled, migrationAddPlansTable}
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
