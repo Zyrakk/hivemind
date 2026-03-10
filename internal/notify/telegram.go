@@ -48,6 +48,13 @@ type PendingApproval struct {
 	ExpiresAt   time.Time
 }
 
+// RunHandle tracks a running plan execution, allowing cancellation from outside.
+type RunHandle struct {
+	Cancel context.CancelFunc
+	Done   chan error
+	PlanID string
+}
+
 type plannerExecutor interface {
 	ExecutePlan(ctx context.Context, planID string) error
 }
@@ -115,6 +122,8 @@ type TelegramBot struct {
 	progressMsgIDs    map[string]int               // taskID -> Telegram message_id
 	planningMsgIDs    map[string]int               // projectRef -> planning Telegram message_id
 	editMessageFn     func(messageID int, text string) error
+	activeRuns        map[string]*RunHandle // keyed by planID
+	activeRunsMu      sync.Mutex
 
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
@@ -153,6 +162,7 @@ func NewTelegramBot(
 		inputResolver:    nil,
 		sendMessageFn:    nil,
 		outboxClosed:     false,
+		activeRuns:       make(map[string]*RunHandle),
 		lastProjectRefMu: sync.RWMutex{},
 		startStopMu:      sync.Mutex{},
 		approvalsMu:      sync.RWMutex{},
@@ -811,6 +821,10 @@ func (t *TelegramBot) cmdRun(ctx context.Context, args string) (string, error) {
 	planResult, err := t.plannerCreate.CreatePlan(ctx, directive, projectRef)
 	t.clearPlanningMsgID(projectRef)
 	if err != nil {
+		var valErr *planner.ErrDirectiveInvalid
+		if errors.As(err, &valErr) {
+			return FormatInvalidDirectiveMessage(valErr.Reason), nil
+		}
 		return formatEscapedLines(fmt.Sprintf("✗ Plan creation failed: %s", err.Error())), nil
 	}
 	if planResult == nil || planResult.Plan == nil {
@@ -870,16 +884,35 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 		t.approvalsMu.Unlock()
 
 		go func(approval PendingApproval) {
-			execCtx := context.Background()
-
 			if t.plannerExec == nil {
-				_ = t.enqueueMessage(execCtx, formatEscapedLines(
+				_ = t.enqueueMessage(context.Background(), formatEscapedLines(
 					fmt.Sprintf("✗ Plan %s failed: planner is not configured", approval.ID),
 				))
 				return
 			}
 
-			if err := t.plannerExec.ExecutePlan(execCtx, approval.ID); err != nil {
+			runCtx, runCancel := context.WithCancel(context.Background())
+			handle := &RunHandle{
+				Cancel: runCancel,
+				Done:   make(chan error, 1),
+				PlanID: approval.ID,
+			}
+
+			t.activeRunsMu.Lock()
+			t.activeRuns[approval.ID] = handle
+			t.activeRunsMu.Unlock()
+
+			defer func() {
+				t.activeRunsMu.Lock()
+				delete(t.activeRuns, approval.ID)
+				t.activeRunsMu.Unlock()
+				runCancel()
+			}()
+
+			err := t.plannerExec.ExecutePlan(runCtx, approval.ID)
+			handle.Done <- err
+
+			if err != nil {
 				errMsg := err.Error()
 				// If the plan is held/escalated, send a HELD message instead of "failed"
 				if strings.Contains(errMsg, "escalated and awaiting input") || strings.Contains(errMsg, "blocked by failed dependencies") {
@@ -887,13 +920,17 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 					// Don't send a redundant "completed" or "failed" message.
 					return
 				}
-				_ = t.enqueueMessage(execCtx, formatEscapedLines(
+				if runCtx.Err() != nil {
+					// Plan was cancelled externally — don't send failure message.
+					return
+				}
+				_ = t.enqueueMessage(context.Background(), formatEscapedLines(
 					fmt.Sprintf("✗ Plan %s failed: %s", approval.ID, errMsg),
 				))
 				return
 			}
 
-			_ = t.enqueueMessage(execCtx, FormatPlanCompletedMessage(approval.ProjectID))
+			_ = t.enqueueMessage(context.Background(), FormatPlanCompletedMessage(approval.ProjectID))
 		}(copyApproval)
 
 		return FormatApprovedMessage(copyApproval.ProjectID), nil

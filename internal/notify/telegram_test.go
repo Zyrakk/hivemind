@@ -588,6 +588,7 @@ func newTestBot(store stateStore) *TelegramBot {
 		prApprovalTTL:    defaultPRApprovalTTL,
 		cleanupInterval:  defaultCleanupInterval,
 		sendRatePerSec:   defaultSendRatePerSecond,
+		activeRuns:       make(map[string]*RunHandle),
 	}
 }
 
