@@ -1037,23 +1037,29 @@ func isCommandNotFound(output string) bool {
 }
 
 // checkoutBranch fetches and checks out a branch in the given repo directory.
+// For remote branches pushed by workers, it always fetches first to get the
+// latest state, then force-creates a local branch at the fetched commit.
 func checkoutBranch(repoPath, branch string) error {
-	// For "main" or local branches, just checkout directly first.
-	cmd := exec.Command("git", "-C", repoPath, "checkout", branch)
-	if out, err := cmd.CombinedOutput(); err == nil {
+	// "main" is always local — just checkout directly.
+	if branch == "main" || branch == "master" {
+		cmd := exec.Command("git", "-C", repoPath, "checkout", branch)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("git checkout %s: %w (%s)", branch, err, strings.TrimSpace(string(out)))
+		}
 		return nil
-	} else {
-		_ = out // direct checkout failed, try fetch first
 	}
 
+	// For worker branches: always fetch to get latest remote state.
 	fetchCmd := exec.Command("git", "-C", repoPath, "fetch", "origin", branch)
 	if out, err := fetchCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git fetch %s: %w (%s)", branch, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("git fetch origin %s: %w (%s)", branch, err, strings.TrimSpace(string(out)))
 	}
 
-	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", branch)
+	// Force-create/update the local branch at FETCH_HEAD, then switch to it.
+	// Using -B to handle both new and existing (stale) local branches.
+	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", "-B", branch, "FETCH_HEAD")
 	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		// Try FETCH_HEAD as fallback.
+		// Fallback: detached HEAD at FETCH_HEAD.
 		fallbackCmd := exec.Command("git", "-C", repoPath, "checkout", "FETCH_HEAD")
 		if out2, err2 := fallbackCmd.CombinedOutput(); err2 != nil {
 			return fmt.Errorf("git checkout %s: %w (%s / %s)", branch, err, strings.TrimSpace(string(out)), strings.TrimSpace(string(out2)))
