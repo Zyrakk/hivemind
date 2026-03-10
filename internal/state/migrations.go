@@ -129,8 +129,44 @@ CREATE INDEX IF NOT EXISTS idx_plans_project_id ON plans(project_id);
 CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status);
 `
 
+const migrationAddBatchTables = `
+CREATE TABLE IF NOT EXISTS batches (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','completed','failed','paused')),
+    total_items INTEGER NOT NULL DEFAULT 0,
+    completed_items INTEGER NOT NULL DEFAULT 0,
+    recovery_note TEXT DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS batch_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL REFERENCES batches(id),
+    sequence INTEGER NOT NULL,
+    directive TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','running','completed','failed','skipped')),
+    plan_id TEXT DEFAULT NULL REFERENCES plans(id),
+    phase TEXT DEFAULT NULL,
+    phase_depends_on TEXT DEFAULT NULL,
+    error TEXT DEFAULT NULL,
+    started_at DATETIME DEFAULT NULL,
+    completed_at DATETIME DEFAULT NULL,
+    UNIQUE(batch_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batches_project_id ON batches(project_id);
+CREATE INDEX IF NOT EXISTS idx_batches_status ON batches(status);
+CREATE INDEX IF NOT EXISTS idx_batch_items_batch_id ON batch_items(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_items_status ON batch_items(status);
+`
+
 func Migrations() []string {
-	return []string{SchemaSQL, migrationAddRejectedCancelled, migrationAddPlansTable}
+	return []string{SchemaSQL, migrationAddRejectedCancelled, migrationAddPlansTable, migrationAddBatchTables}
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {
