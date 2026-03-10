@@ -158,6 +158,13 @@ func main() {
 		}
 	}()
 
+	recovered, recoverErr := store.RecoverFromRestart(ctx)
+	if recoverErr != nil {
+		logger.Error("startup recovery failed", slog.Any("error", recoverErr))
+	} else if recovered > 0 {
+		logger.Warn("startup recovery completed", slog.Int("recovered", recovered))
+	}
+
 	glmAPIKey := os.Getenv(defaultEnvName(cfg.GLM.APIKeyEnv, "ZAI_API_KEY"))
 	glmTimeout := parseDurationOrDefault(cfg.GLM.Timeout, 60*time.Second)
 	glmClient := llm.NewGLMClient(llm.GLMConfig{
