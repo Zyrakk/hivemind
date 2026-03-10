@@ -31,3 +31,6 @@ config.yaml.save
 sessions/cache/*.log
 sessions/cache/*.code
 .gocache/
+
+# Other
+/plan/
