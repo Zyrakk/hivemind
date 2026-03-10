@@ -55,6 +55,22 @@ const (
 	PlanStatusCancelled = "cancelled"
 )
 
+const (
+	BatchStatusPending   = "pending"
+	BatchStatusRunning   = "running"
+	BatchStatusCompleted = "completed"
+	BatchStatusFailed    = "failed"
+	BatchStatusPaused    = "paused"
+)
+
+const (
+	BatchItemStatusPending   = "pending"
+	BatchItemStatusRunning   = "running"
+	BatchItemStatusCompleted = "completed"
+	BatchItemStatusFailed    = "failed"
+	BatchItemStatusSkipped   = "skipped"
+)
+
 type Project struct {
 	ID           int64
 	Name         string
@@ -110,6 +126,32 @@ type Plan struct {
 	PlanData  []byte
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type Batch struct {
+	ID             string
+	ProjectID      int64
+	Name           string
+	Status         string
+	TotalItems     int
+	CompletedItems int
+	RecoveryNote   *string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type BatchItem struct {
+	ID             int64
+	BatchID        string
+	Sequence       int
+	Directive      string
+	Status         string
+	PlanID         *string
+	Phase          *string
+	PhaseDependsOn *string
+	Error          *string
+	StartedAt      *time.Time
+	CompletedAt    *time.Time
 }
 
 type ProjectSummary struct {
