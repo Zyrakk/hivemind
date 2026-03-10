@@ -78,6 +78,22 @@ func codeBlock(content string) string {
 	return "```\n" + content + "\n```"
 }
 
+// FormatInvalidDirectiveMessage renders a structured box-drawing error for
+// directive validation failures, including example directives.
+func FormatInvalidDirectiveMessage(errMsg string) string {
+	var box strings.Builder
+	box.WriteString("┌─ INVALID DIRECTIVE ─────────\n")
+	box.WriteString(fmt.Sprintf("│ %s\n", errMsg))
+	box.WriteString("│\n")
+	box.WriteString("│ Good examples:\n")
+	box.WriteString("│   Add a --json flag to the audit command\n")
+	box.WriteString("│   Implement /healthz endpoint for k8s probes\n")
+	box.WriteString("│   Replace the CSV reporter with a streaming writer\n")
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
+}
+
 func FormatNeedsInputMessage(projectID, question, approvalID string) string {
 	var box strings.Builder
 	box.WriteString("┌─ INPUT NEEDED ─────────────\n")

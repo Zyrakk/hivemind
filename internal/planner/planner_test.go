@@ -42,7 +42,7 @@ func TestCreatePlanReturnsValidPlanAndPersistsTasks(t *testing.T) {
 	}
 
 	planner := NewWithDeps(glm, nil, newMockPlannerLauncher(true), store, "prompts", nil)
-	result, err := planner.CreatePlan(context.Background(), "Implement planner module", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Implement the planner module command with a new test endpoint", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestCreatePlanLowConfidenceConsultsAndRefines(t *testing.T) {
 	}
 
 	planner := NewWithDeps(glm, []llm.ConsultantClient{consultant}, newMockPlannerLauncher(true), store, "prompts", nil)
-	result, err := planner.CreatePlan(context.Background(), "Implement risky feature", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Implement the risky feature command with a new validation endpoint", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestCreatePlanWithQuestionsReturnsNeedsInput(t *testing.T) {
 	}
 
 	planner := NewWithDeps(glm, nil, newMockPlannerLauncher(true), store, "prompts", nil)
-	result, err := planner.CreatePlan(context.Background(), "Plan with ambiguity", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Create a new config file for the ambiguity resolution module", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestExecutePlanRespectsDependencies(t *testing.T) {
 
 	launch := newMockPlannerLauncher(true)
 	planner := NewWithDeps(glm, nil, launch, store, "prompts", nil)
-	planResult, err := planner.CreatePlan(context.Background(), "Run dependent tasks", "flux")
+	planResult, err := planner.CreatePlan(context.Background(), "Add a new command to run dependent tasks for the test module", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestExecutePlanRunsEvaluatorAndHandlesIterate(t *testing.T) {
 	mockEval := &mockPlanEvaluator{launcher: launch}
 	planner.SetEvaluator(mockEval)
 
-	planResult, err := planner.CreatePlan(context.Background(), "Run full flow", "flux")
+	planResult, err := planner.CreatePlan(context.Background(), "Implement the full flow command with endpoint and test support", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestNotificationsWired(t *testing.T) {
 		notifier := &mockPlannerNotifier{}
 		planner.SetNotifier(notifier)
 
-		planResult, err := planner.CreatePlan(context.Background(), "Run task", "flux")
+		planResult, err := planner.CreatePlan(context.Background(), "Add a command to run the task executor for the test module", "flux")
 		if err != nil {
 			t.Fatalf("CreatePlan returned error: %v", err)
 		}
@@ -298,7 +298,7 @@ func TestNotificationsWired(t *testing.T) {
 		notifier := &mockPlannerNotifier{}
 		planner.SetNotifier(notifier)
 
-		planResult, err := planner.CreatePlan(context.Background(), "Run task", "flux")
+		planResult, err := planner.CreatePlan(context.Background(), "Add a command to run the task executor for the test module", "flux")
 		if err != nil {
 			t.Fatalf("CreatePlan returned error: %v", err)
 		}
@@ -353,7 +353,7 @@ func TestCreatePlanViaEngineInfoRequestFlow(t *testing.T) {
 	planner.SetEngine(mockEngine)
 	planner.SetRecon(mockRecon)
 
-	result, err := planner.CreatePlan(context.Background(), "Implement engine flow", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Implement the engine flow command with a new config endpoint", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestCreatePlanViaEngineQuestionReturnsNeedsInputError(t *testing.T) {
 		},
 	})
 
-	result, err := planner.CreatePlan(context.Background(), "Plan with operator question", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Create a new command for operator question handling in the module", "flux")
 	if err == nil {
 		t.Fatal("CreatePlan error = nil, want error")
 	}
@@ -433,7 +433,7 @@ func TestCreatePlanViaEngineStopsAfterFiveIterations(t *testing.T) {
 	planner.SetEngine(mockEngine)
 	planner.SetRecon(&mockPlannerRecon{runOutput: "context"})
 
-	result, err := planner.CreatePlan(context.Background(), "Plan with long think loop", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Add a new command for long think loop processing in the module", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestCreatePlanUsesLastUsedEngineNameAfterFallback(t *testing.T) {
 		},
 	})
 
-	result, err := planner.CreatePlan(context.Background(), "Plan with fallback engine", "flux")
+	result, err := planner.CreatePlan(context.Background(), "Implement the fallback engine command for the config module test", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestRebuildPlanUsesEngineRebuild(t *testing.T) {
 	}
 
 	planner := NewWithDeps(glm, nil, newMockPlannerLauncher(true), store, "prompts", nil)
-	initial, err := planner.CreatePlan(context.Background(), "Initial plan", "flux")
+	initial, err := planner.CreatePlan(context.Background(), "Create the initial plan command for the test module config", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
@@ -1012,7 +1012,7 @@ func TestExecutePlanEscalatedTasksReturnError(t *testing.T) {
 	planner := NewWithDeps(glm, nil, launch, store, "prompts", nil)
 	planner.SetEvaluator(&mockEscalatingEvaluator{})
 
-	planResult, err := planner.CreatePlan(context.Background(), "Build project", "flux")
+	planResult, err := planner.CreatePlan(context.Background(), "Add a command to build the project with test config support", "flux")
 	if err != nil {
 		t.Fatalf("CreatePlan returned error: %v", err)
 	}
