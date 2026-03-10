@@ -893,9 +893,7 @@ func (t *TelegramBot) cmdApprove(ctx context.Context, args string) (string, erro
 				return
 			}
 
-			_ = t.enqueueMessage(execCtx, formatEscapedLines(
-				fmt.Sprintf("✓ Plan %s completed.", approval.ID),
-			))
+			_ = t.enqueueMessage(execCtx, FormatPlanCompletedMessage(approval.ProjectID))
 		}(copyApproval)
 
 		return FormatApprovedMessage(copyApproval.ProjectID), nil

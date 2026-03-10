@@ -385,6 +385,12 @@ func FormatPlanMessage(projectRef string, result *planner.PlanResult) string {
 	return TruncateTelegramMessage(msg)
 }
 
+func FormatPlanCompletedMessage(project string) string {
+	return codeBlock(fmt.Sprintf(
+		"┌─ COMPLETED ────────────────\n│ ✓ %s │ all tasks done\n└────────────────────────────",
+		project))
+}
+
 func FormatProgressMessage(project, stage, detail string) string {
 	return EscapeMarkdownV2(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
 }
