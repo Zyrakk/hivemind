@@ -76,8 +76,8 @@ type PlanResult struct {
 }
 
 type plannedTask struct {
-	Task     llm.Task
-	DBTaskID int64
+	Task     llm.Task `json:"task"`
+	DBTaskID int64    `json:"db_task_id"`
 }
 
 type runtimeTaskState struct {
@@ -89,15 +89,15 @@ type runtimeTaskState struct {
 }
 
 type storedPlan struct {
-	PlanID     string
-	ProjectID  int64
-	ProjectRef string
-	Directive  string
-	AgentsMD   string
-	Cache      string
-	Plan       *llm.TaskPlan
-	Engine     string
-	Tasks      []plannedTask
+	PlanID     string        `json:"plan_id"`
+	ProjectID  int64         `json:"project_id"`
+	ProjectRef string        `json:"project_ref"`
+	Directive  string        `json:"directive"`
+	AgentsMD   string        `json:"agents_md"`
+	Cache      string        `json:"cache"`
+	Plan       *llm.TaskPlan `json:"plan"`
+	Engine     string        `json:"engine"`
+	Tasks      []plannedTask `json:"tasks"`
 }
 
 type Planner struct {
@@ -219,6 +219,12 @@ func (p *Planner) CreatePlan(ctx context.Context, directive string, projectID st
 		return nil, fmt.Errorf("directive is required")
 	}
 
+	cleanedDirective, valErr := ValidateDirective(directive)
+	if valErr != nil {
+		return nil, valErr
+	}
+	directive = cleanedDirective
+
 	agentsMD, err := readProjectAgents(projectID)
 	if err != nil {
 		return nil, err
@@ -336,8 +342,30 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 	planEvaluator := p.evaluator
 	planNotifier := p.notifier
 	p.mu.Unlock()
+
+	if !ok && p.db != nil {
+		dbPlan, dbErr := p.db.GetPlan(ctx, planID)
+		if dbErr != nil {
+			return fmt.Errorf("plan %q not found in memory or DB: %w", planID, dbErr)
+		}
+		restored, deserErr := deserializeStoredPlan(dbPlan.PlanData)
+		if deserErr != nil {
+			return fmt.Errorf("deserialize plan %q: %w", planID, deserErr)
+		}
+		plan = restored
+		// Cache it for subsequent lookups.
+		p.mu.Lock()
+		p.planByID[planID] = plan
+		p.mu.Unlock()
+		ok = true
+	}
 	if !ok {
 		return fmt.Errorf("plan %q not found", planID)
+	}
+
+	// Mark plan as executing in DB.
+	if p.db != nil {
+		_ = p.db.UpdatePlanStatus(ctx, planID, state.PlanStatusExecuting)
 	}
 
 	states := make(map[string]*runtimeTaskState, len(plan.Tasks))
@@ -645,6 +673,15 @@ func (p *Planner) ExecutePlan(ctx context.Context, planID string) error {
 			blocked = append(blocked, key)
 		}
 	}
+	// Update plan status in DB based on outcome.
+	if p.db != nil {
+		if len(failed) > 0 || len(blocked) > 0 {
+			_ = p.db.UpdatePlanStatus(ctx, planID, state.PlanStatusFailed)
+		} else {
+			_ = p.db.UpdatePlanStatus(ctx, planID, state.PlanStatusCompleted)
+		}
+	}
+
 	if len(failed) > 0 {
 		return fmt.Errorf("plan execution completed with failed tasks: %s", strings.Join(failed, ", "))
 	}
@@ -852,6 +889,18 @@ func (p *Planner) finalizePlan(
 		Tasks:      storedTasks,
 	}
 
+	// Persist to DB (source of truth).
+	if p.db != nil {
+		planJSON, marshalErr := serializeStoredPlan(stored)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("serialize plan: %w", marshalErr)
+		}
+		if createErr := p.db.CreatePlan(ctx, resolvedProjectID, planID, directive, engineName, planJSON); createErr != nil {
+			return nil, fmt.Errorf("persist plan: %w", createErr)
+		}
+	}
+
+	// Keep in-memory cache for fast lookup within the same process lifetime.
 	p.mu.Lock()
 	p.planByID[planID] = stored
 	p.mu.Unlock()
@@ -1418,6 +1467,16 @@ func normalizePlanEngineName(name string) string {
 
 func generatePlanID() string {
 	return fmt.Sprintf("plan-%d", time.Now().UnixNano())
+}
+
+func serializeStoredPlan(sp storedPlan) ([]byte, error) {
+	return json.Marshal(sp)
+}
+
+func deserializeStoredPlan(data []byte) (storedPlan, error) {
+	var sp storedPlan
+	err := json.Unmarshal(data, &sp)
+	return sp, err
 }
 
 func indexOf(slice []string, item string) int {
