@@ -252,6 +252,9 @@ func TestUpdateBatchItemStatus(t *testing.T) {
 	batchID, _ := store.CreateBatch(ctx, projectID, "test", []string{"directive"})
 	items, _ := store.GetBatchItems(ctx, batchID)
 
+	// Create a plan so the FK constraint is satisfied.
+	_ = store.CreatePlan(ctx, projectID, "plan-abc", "test directive", "claude-code", []byte(`{}`))
+
 	// Mark as running.
 	err := store.UpdateBatchItemStatus(ctx, items[0].ID, BatchItemStatusRunning, "", "")
 	if err != nil {

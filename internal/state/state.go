@@ -1096,6 +1096,389 @@ func isValidPlanStatus(status string) bool {
 	}
 }
 
+func isValidBatchStatus(status string) bool {
+	switch status {
+	case BatchStatusPending, BatchStatusRunning, BatchStatusCompleted,
+		BatchStatusFailed, BatchStatusPaused:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidBatchItemStatus(status string) bool {
+	switch status {
+	case BatchItemStatusPending, BatchItemStatusRunning, BatchItemStatusCompleted,
+		BatchItemStatusFailed, BatchItemStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+func generateBatchID() string {
+	return fmt.Sprintf("batch-%d", time.Now().UnixNano())
+}
+
+func (s *Store) CreateBatch(ctx context.Context, projectID int64, name string, directives []string) (string, error) {
+	if s == nil || s.db == nil {
+		return "", fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if projectID <= 0 {
+		return "", fmt.Errorf("project_id is required: %w", ErrInvalidInput)
+	}
+	if len(directives) == 0 {
+		return "", fmt.Errorf("at least one directive is required: %w", ErrInvalidInput)
+	}
+
+	batchID := generateBatchID()
+	now := formatTime(nowUTC())
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO batches (id, project_id, name, status, total_items, completed_items, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+		batchID, projectID, name, BatchStatusPending, len(directives), now, now,
+	)
+	if err != nil {
+		return "", fmt.Errorf("insert batch: %w", err)
+	}
+
+	for i, directive := range directives {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO batch_items (batch_id, sequence, directive, status)
+			 VALUES (?, ?, ?, ?)`,
+			batchID, i+1, directive, BatchItemStatusPending,
+		)
+		if err != nil {
+			return "", fmt.Errorf("insert batch item %d: %w", i+1, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit batch: %w", err)
+	}
+
+	return batchID, nil
+}
+
+func (s *Store) GetBatch(ctx context.Context, batchID string) (*Batch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	var (
+		batch        Batch
+		recoveryNote sql.NullString
+		createdRaw   any
+		updatedRaw   any
+	)
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, project_id, name, status, total_items, completed_items, recovery_note, created_at, updated_at
+		 FROM batches WHERE id = ?`, batchID,
+	).Scan(&batch.ID, &batch.ProjectID, &batch.Name, &batch.Status,
+		&batch.TotalItems, &batch.CompletedItems, &recoveryNote,
+		&createdRaw, &updatedRaw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("batch %q: %w", batchID, ErrNotFound)
+		}
+		return nil, fmt.Errorf("get batch: %w", err)
+	}
+
+	if recoveryNote.Valid {
+		batch.RecoveryNote = &recoveryNote.String
+	}
+
+	createdAt, parseErr := parseTimeValue(createdRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	updatedAt, parseErr := parseTimeValue(updatedRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	batch.CreatedAt = createdAt
+	batch.UpdatedAt = updatedAt
+
+	return &batch, nil
+}
+
+func (s *Store) GetBatchItems(ctx context.Context, batchID string) ([]BatchItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, batch_id, sequence, directive, status, plan_id, phase, phase_depends_on, error, started_at, completed_at
+		 FROM batch_items WHERE batch_id = ?
+		 ORDER BY sequence ASC`, batchID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query batch items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]BatchItem, 0)
+	for rows.Next() {
+		var (
+			item           BatchItem
+			planID         sql.NullString
+			phase          sql.NullString
+			phaseDependsOn sql.NullString
+			errMsg         sql.NullString
+			startedRaw     any
+			completedRaw   any
+		)
+		if scanErr := rows.Scan(&item.ID, &item.BatchID, &item.Sequence, &item.Directive,
+			&item.Status, &planID, &phase, &phaseDependsOn, &errMsg,
+			&startedRaw, &completedRaw); scanErr != nil {
+			return nil, fmt.Errorf("scan batch item: %w", scanErr)
+		}
+		if planID.Valid {
+			item.PlanID = &planID.String
+		}
+		if phase.Valid {
+			item.Phase = &phase.String
+		}
+		if phaseDependsOn.Valid {
+			item.PhaseDependsOn = &phaseDependsOn.String
+		}
+		if errMsg.Valid {
+			item.Error = &errMsg.String
+		}
+		startedAt, parseErr := parseOptionalTimeValue(startedRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		item.StartedAt = startedAt
+		completedAt, parseErr := parseOptionalTimeValue(completedRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		item.CompletedAt = completedAt
+
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate batch items: %w", err)
+	}
+
+	return items, nil
+}
+
+func (s *Store) UpdateBatchStatus(ctx context.Context, batchID, status string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if !isValidBatchStatus(status) {
+		return fmt.Errorf("batch status %q: %w", status, ErrInvalidStatus)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE batches SET status = ?, updated_at = ? WHERE id = ?`,
+		status, formatTime(nowUTC()), batchID,
+	)
+	if err != nil {
+		return fmt.Errorf("update batch status: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (batch status): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if !isValidBatchItemStatus(status) {
+		return fmt.Errorf("batch item status %q: %w", status, ErrInvalidStatus)
+	}
+
+	now := formatTime(nowUTC())
+
+	var planIDVal, errorVal any
+	if strings.TrimSpace(planID) != "" {
+		planIDVal = planID
+	}
+	if strings.TrimSpace(errorMsg) != "" {
+		errorVal = errorMsg
+	}
+
+	// Set started_at when transitioning to running; completed_at for terminal states.
+	var startedAt, completedAt any
+	if status == BatchItemStatusRunning {
+		startedAt = now
+	}
+	if status == BatchItemStatusCompleted || status == BatchItemStatusFailed || status == BatchItemStatusSkipped {
+		completedAt = now
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE batch_items SET status = ?,
+			plan_id = COALESCE(?, plan_id),
+			error = COALESCE(?, error),
+			started_at = COALESCE(?, started_at),
+			completed_at = COALESCE(?, completed_at)
+		 WHERE id = ?`,
+		status, planIDVal, errorVal, startedAt, completedAt, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("update batch item status: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (batch item status): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetNextPendingBatchItem(ctx context.Context, batchID string) (*BatchItem, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	var (
+		item           BatchItem
+		planID         sql.NullString
+		phase          sql.NullString
+		phaseDependsOn sql.NullString
+		errMsg         sql.NullString
+		startedRaw     any
+		completedRaw   any
+	)
+
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, batch_id, sequence, directive, status, plan_id, phase, phase_depends_on, error, started_at, completed_at
+		 FROM batch_items
+		 WHERE batch_id = ? AND status = ?
+		 ORDER BY sequence ASC
+		 LIMIT 1`, batchID, BatchItemStatusPending,
+	).Scan(&item.ID, &item.BatchID, &item.Sequence, &item.Directive,
+		&item.Status, &planID, &phase, &phaseDependsOn, &errMsg,
+		&startedRaw, &completedRaw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // No pending items — batch is done.
+		}
+		return nil, fmt.Errorf("get next pending batch item: %w", err)
+	}
+
+	if planID.Valid {
+		item.PlanID = &planID.String
+	}
+	if phase.Valid {
+		item.Phase = &phase.String
+	}
+	if phaseDependsOn.Valid {
+		item.PhaseDependsOn = &phaseDependsOn.String
+	}
+	if errMsg.Valid {
+		item.Error = &errMsg.String
+	}
+	startedAt, parseErr := parseOptionalTimeValue(startedRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	item.StartedAt = startedAt
+	completedAt, parseErr := parseOptionalTimeValue(completedRaw)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	item.CompletedAt = completedAt
+
+	return &item, nil
+}
+
+func (s *Store) IncrementBatchProgress(ctx context.Context, batchID string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE batches SET completed_items = completed_items + 1, updated_at = ? WHERE id = ?`,
+		formatTime(nowUTC()), batchID,
+	)
+	if err != nil {
+		return fmt.Errorf("increment batch progress: %w", err)
+	}
+
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (batch progress): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetRunningBatches(ctx context.Context) ([]Batch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, name, status, total_items, completed_items, recovery_note, created_at, updated_at
+		 FROM batches WHERE status = ?
+		 ORDER BY created_at ASC`, BatchStatusRunning,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query running batches: %w", err)
+	}
+	defer rows.Close()
+
+	batches := make([]Batch, 0)
+	for rows.Next() {
+		var (
+			batch        Batch
+			recoveryNote sql.NullString
+			createdRaw   any
+			updatedRaw   any
+		)
+		if scanErr := rows.Scan(&batch.ID, &batch.ProjectID, &batch.Name, &batch.Status,
+			&batch.TotalItems, &batch.CompletedItems, &recoveryNote,
+			&createdRaw, &updatedRaw); scanErr != nil {
+			return nil, fmt.Errorf("scan batch: %w", scanErr)
+		}
+		if recoveryNote.Valid {
+			batch.RecoveryNote = &recoveryNote.String
+		}
+		createdAt, parseErr := parseTimeValue(createdRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		updatedAt, parseErr := parseTimeValue(updatedRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		batch.CreatedAt = createdAt
+		batch.UpdatedAt = updatedAt
+		batches = append(batches, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate running batches: %w", err)
+	}
+
+	return batches, nil
+}
+
 // RecoverFromRestart detects zombie states left by a process crash and
 // transitions them to safe states. Returns the count of recovered items.
 func (s *Store) RecoverFromRestart(ctx context.Context) (int, error) {
