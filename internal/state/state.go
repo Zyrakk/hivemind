@@ -1513,6 +1513,30 @@ func (s *Store) RecoverFromRestart(ctx context.Context) (int, error) {
 		recovered += int(n)
 	}
 
+	// 3. Batch items stuck in "running" → "failed".
+	res, err = s.db.ExecContext(ctx,
+		`UPDATE batch_items SET status = ?, error = ?, completed_at = ? WHERE status = ?`,
+		BatchItemStatusFailed, "process restarted", now, BatchItemStatusRunning,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("recover running batch items: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		recovered += int(n)
+	}
+
+	// 4. Batches stuck in "running" → "paused".
+	res, err = s.db.ExecContext(ctx,
+		`UPDATE batches SET status = ?, recovery_note = ?, updated_at = ? WHERE status = ?`,
+		BatchStatusPaused, "process restarted", now, BatchStatusRunning,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("recover running batches: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		recovered += int(n)
+	}
+
 	return recovered, nil
 }
 
