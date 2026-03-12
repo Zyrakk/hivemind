@@ -1367,6 +1367,27 @@ func TestCmdBatchStatus_NotFound(t *testing.T) {
 	}
 }
 
+func TestHyphenatedCommandFallback(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	// Simulate Telegram not recognizing /cancel-batch as a command,
+	// so it arrives as free text.
+	msg, err := bot.handleFreeText(ctx, fmt.Sprintf("/cancel-batch %s", batchID))
+	if err != nil {
+		t.Fatalf("hyphenated command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cancelled") {
+		t.Fatalf("expected cancelled message via hyphen fallback, got %q", msg)
+	}
+}
+
 func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	store := newMockStore(time.Now().UTC())

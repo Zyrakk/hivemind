@@ -924,6 +924,22 @@ func (t *TelegramBot) handleFreeText(ctx context.Context, text string) (string, 
 		return "", nil
 	}
 
+	// Fallback: Telegram doesn't create command entities for hyphenated
+	// commands like /start-batch. Normalize hyphens to underscores and
+	// re-dispatch as a regular command.
+	if strings.HasPrefix(text, "/") {
+		first := strings.SplitN(text, " ", 2)
+		cmd := strings.TrimPrefix(first[0], "/")
+		if strings.Contains(cmd, "-") {
+			cmd = strings.ReplaceAll(cmd, "-", "_")
+			args := ""
+			if len(first) > 1 {
+				args = strings.TrimSpace(first[1])
+			}
+			return t.handleCommand(ctx, cmd, args)
+		}
+	}
+
 	approval := t.findLatestTextApproval()
 	if approval == nil {
 		return formatEscapedLines("Unknown command. Use /help to see available commands."), nil

@@ -123,7 +123,7 @@ func TestFormatStatusAndPendingMessages(t *testing.T) {
 
 func TestFormatHelpMessage(t *testing.T) {
 	help := FormatHelpMessage()
-	for _, want := range []string{"/status", "/help", "/run", "HIVEMIND COMMANDS", "┌", "└"} {
+	for _, want := range []string{"/status", "/help", "/run", "/batch", "/start_batch", "/cancel_batch", "/batch_status", "HIVEMIND COMMANDS", "┌", "└"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("expected %q in help message:\n%s", want, help)
 		}
