@@ -1320,6 +1320,53 @@ func TestCmdCancelBatch_AlreadyCompleted(t *testing.T) {
 	}
 }
 
+func TestCmdBatchStatus_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+		"Add dry-run flag to the audit command",
+	})
+
+	msg, err := bot.handleCommand(ctx, "batch_status", batchID)
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "BATCH STATUS") {
+		t.Fatalf("expected batch status message, got %q", msg)
+	}
+	if !strings.Contains(msg, "flux") {
+		t.Fatalf("expected project ref in message, got %q", msg)
+	}
+	if !strings.Contains(msg, "◻ Add YAML config") {
+		t.Fatalf("expected item listing, got %q", msg)
+	}
+}
+
+func TestCmdBatchStatus_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch_status", "")
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdBatchStatus_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch_status", "batch-nope")
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
 func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	store := newMockStore(time.Now().UTC())

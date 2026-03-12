@@ -852,6 +852,38 @@ func (t *TelegramBot) cmdCancelBatch(ctx context.Context, args string) (string, 
 	return formatEscapedLines(fmt.Sprintf("✓ Batch %s cancelled.", batchID)), nil
 }
 
+func (t *TelegramBot) cmdBatchStatus(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /batch_status {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+
+	// Resolve project ref from project ID for display.
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	detail, detailErr := t.store.GetProjectDetail(ctx, projectRef)
+	if detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	return FormatBatchStatusMessage(projectRef, batchID, batch.Status, batch.CompletedItems, batch.TotalItems, items), nil
+}
+
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "status":
@@ -876,6 +908,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdStartBatch(ctx, args)
 	case "cancel_batch":
 		return t.cmdCancelBatch(ctx, args)
+	case "batch_status":
+		return t.cmdBatchStatus(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
