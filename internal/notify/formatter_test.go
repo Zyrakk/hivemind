@@ -348,6 +348,33 @@ func TestRenderProgressTimeline_TruncatesLongTimeline(t *testing.T) {
 	}
 }
 
+func TestFormatBatchCreatedMessage(t *testing.T) {
+	msg := FormatBatchCreatedMessage("nhi-watch", "batch-123", []string{
+		"Add YAML config parser for scoring rules",
+		"Add --dry-run flag to the audit command",
+		"Add --json output flag to the audit command",
+		"Add CSV export to the reporter module",
+	})
+	for _, want := range []string{
+		"BATCH CREATED",
+		"nhi-watch",
+		"Items:   4",
+		"ready",
+		"1 ◻ Add YAML config",
+		"4 ◻ Add CSV export",
+		"/start_batch batch-123",
+		"/cancel_batch batch-123",
+		"┌", "└", "```",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in message:\n%s", want, msg)
+		}
+	}
+	if len([]rune(msg)) > telegramMessageLimit {
+		t.Fatalf("message exceeds telegram limit")
+	}
+}
+
 func TestFormatPRReadyWithUserChecks(t *testing.T) {
 	msg := FormatPRReadyMessage("Flux", "feat/x", "pr-1",
 		[]CheckResult{

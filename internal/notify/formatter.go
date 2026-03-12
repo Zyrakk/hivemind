@@ -407,6 +407,25 @@ func FormatPlanCompletedMessage(project string) string {
 		project))
 }
 
+func FormatBatchCreatedMessage(projectRef, batchID string, directives []string) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH CREATED ─────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Items:   %d\n", len(directives)))
+	box.WriteString("│ Status:  ready\n")
+	box.WriteString("├────────────────────────────\n")
+	for i, d := range directives {
+		box.WriteString(fmt.Sprintf("│ %d ◻ %s\n", i+1, d))
+	}
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + codeBlock(fmt.Sprintf("/start_batch %s", batchID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/cancel_batch %s", batchID))
+
+	return TruncateTelegramMessage(msg)
+}
+
 func FormatProgressMessage(project, stage, detail string) string {
 	return EscapeMarkdownV2(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
 }
