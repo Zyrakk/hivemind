@@ -700,6 +700,97 @@ func inboundMessage(update tgbotapi.Update) *tgbotapi.Message {
 	return nil
 }
 
+func parseBatchArgs(args string) (projectRef string, directives []string) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return "", nil
+	}
+
+	lines := strings.Split(args, "\n")
+	firstLine := strings.TrimSpace(lines[0])
+	if firstLine == "" {
+		return "", nil
+	}
+
+	parts := strings.SplitN(firstLine, " ", 2)
+	projectRef = strings.TrimSpace(parts[0])
+
+	if len(parts) > 1 {
+		remaining := strings.TrimSpace(parts[1])
+		if strings.Contains(remaining, "|") {
+			for _, d := range strings.Split(remaining, "|") {
+				d = strings.TrimSpace(d)
+				if d != "" {
+					directives = append(directives, d)
+				}
+			}
+		} else if remaining != "" {
+			directives = append(directives, remaining)
+		}
+	}
+
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			directives = append(directives, line)
+		}
+	}
+
+	return projectRef, directives
+}
+
+func (t *TelegramBot) cmdBatch(ctx context.Context, args string) (string, error) {
+	projectRef, directives := parseBatchArgs(args)
+	if projectRef == "" || len(directives) == 0 {
+		return formatEscapedLines(
+			"Usage: /batch {project} {directive 1} | {directive 2}",
+			"Or multiline:",
+			"  /batch {project}",
+			"  directive 1",
+			"  directive 2",
+		), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	projectID, err := t.store.ResolveProjectID(ctx, projectRef)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Project '%s' not found.", projectRef)), nil
+		}
+		return "", err
+	}
+
+	var validationErrors []string
+	cleaned := make([]string, 0, len(directives))
+	for i, d := range directives {
+		c, valErr := planner.ValidateDirective(d)
+		if valErr != nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("%d: %s", i+1, valErr.Error()))
+		} else {
+			cleaned = append(cleaned, c)
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("✗ %d of %d directives invalid:\n", len(validationErrors), len(directives)))
+		for _, e := range validationErrors {
+			sb.WriteString(fmt.Sprintf("  %s\n", e))
+		}
+		return formatEscapedLines(sb.String()), nil
+	}
+
+	batchID, err := t.store.CreateBatch(ctx, projectID, "", cleaned)
+	if err != nil {
+		return "", err
+	}
+
+	t.setLastProjectRef(projectRef)
+	return FormatBatchCreatedMessage(projectRef, batchID, cleaned), nil
+}
+
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "status":
@@ -718,6 +809,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdResume(ctx, args)
 	case "consult":
 		return t.cmdConsult(ctx, args)
+	case "batch":
+		return t.cmdBatch(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
