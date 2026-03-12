@@ -426,6 +426,51 @@ func FormatBatchCreatedMessage(projectRef, batchID string, directives []string) 
 	return TruncateTelegramMessage(msg)
 }
 
+func batchItemIcon(status string) string {
+	switch status {
+	case state.BatchItemStatusCompleted:
+		return "✓"
+	case state.BatchItemStatusRunning:
+		return "▸"
+	case state.BatchItemStatusFailed:
+		return "✗"
+	case state.BatchItemStatusSkipped:
+		return "⊘"
+	default:
+		return "◻"
+	}
+}
+
+func FormatBatchStatusMessage(projectRef, batchID, status string, completed, total int, items []state.BatchItem) string {
+	statusLine := status
+	switch status {
+	case state.BatchStatusRunning:
+		statusLine = fmt.Sprintf("running (%d/%d)", completed, total)
+	case state.BatchStatusCompleted:
+		statusLine = fmt.Sprintf("completed (%d/%d)", completed, total)
+	case state.BatchStatusPaused:
+		statusLine = fmt.Sprintf("paused (%d/%d)", completed, total)
+	case state.BatchStatusFailed:
+		statusLine = fmt.Sprintf("failed (%d/%d)", completed, total)
+	}
+
+	var box strings.Builder
+	box.WriteString("┌─ BATCH STATUS ──────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Status:  %s\n", statusLine))
+	box.WriteString("├────────────────────────────\n")
+	for _, item := range items {
+		icon := batchItemIcon(item.Status)
+		box.WriteString(fmt.Sprintf("│ %d %s %s\n", item.Sequence, icon, item.Directive))
+		if item.Error != nil && *item.Error != "" {
+			box.WriteString(fmt.Sprintf("│     %s\n", *item.Error))
+		}
+	}
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
+}
+
 func FormatProgressMessage(project, stage, detail string) string {
 	return EscapeMarkdownV2(fmt.Sprintf("▸ %s │ %s │ %s", project, stage, detail))
 }
