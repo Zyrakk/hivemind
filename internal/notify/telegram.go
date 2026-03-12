@@ -791,6 +791,39 @@ func (t *TelegramBot) cmdBatch(ctx context.Context, args string) (string, error)
 	return FormatBatchCreatedMessage(projectRef, batchID, cleaned), nil
 }
 
+func (t *TelegramBot) cmdStartBatch(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /start_batch {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+
+	if batch.Status != state.BatchStatusPending && batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, cannot start.", batch.Status)), nil
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+
+	return formatEscapedLines(fmt.Sprintf("▸ Batch started. Executing directive 1/%d...", len(items))), nil
+}
+
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "status":
@@ -811,6 +844,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdConsult(ctx, args)
 	case "batch":
 		return t.cmdBatch(ctx, args)
+	case "start_batch":
+		return t.cmdStartBatch(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":

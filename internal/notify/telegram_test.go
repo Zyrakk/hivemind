@@ -1202,3 +1202,73 @@ func TestCmdBatch_ValidationFailure(t *testing.T) {
 		t.Fatalf("expected validation error, got %q", msg)
 	}
 }
+
+func TestCmdStartBatch_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	// Pre-create a batch
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+		"Add dry-run flag to the audit command",
+	})
+
+	msg, err := bot.handleCommand(ctx, "start_batch", batchID)
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Batch started") {
+		t.Fatalf("expected started message, got %q", msg)
+	}
+	if !strings.Contains(msg, "1/2") {
+		t.Fatalf("expected directive count, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if store.batches[batchID].Status != state.BatchStatusRunning {
+		t.Fatalf("expected batch status running, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdStartBatch_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "start_batch", "")
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdStartBatch_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "start_batch", "batch-nope")
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
+func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "start_batch", batchID)
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cannot start") {
+		t.Fatalf("expected cannot start message, got %q", msg)
+	}
+}
