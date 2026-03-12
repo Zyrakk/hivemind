@@ -88,6 +88,10 @@ type stateStore interface {
 	UpdateTask(ctx context.Context, taskID int64, update state.TaskUpdate) error
 	UpdateWorker(ctx context.Context, workerID int64, update state.WorkerUpdate) error
 	AppendEvent(ctx context.Context, event state.Event) error
+	CreateBatch(ctx context.Context, projectID int64, name string, directives []string) (string, error)
+	GetBatch(ctx context.Context, batchID string) (*state.Batch, error)
+	GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error)
+	UpdateBatchStatus(ctx context.Context, batchID, status string) error
 }
 
 type TelegramBot struct {

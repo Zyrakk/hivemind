@@ -670,6 +670,8 @@ type mockStore struct {
 	events             []state.Event
 	taskUpdates        int
 	workerUpdates      int
+	batches            map[string]*state.Batch
+	batchItems         map[string][]state.BatchItem
 }
 
 func newMockStore(now time.Time) *mockStore {
@@ -722,6 +724,8 @@ func newMockStore(now time.Time) *mockStore {
 		projectStatusByRef: make(map[string]string),
 		projectStatusByID:  make(map[int64]string),
 		events:             make([]state.Event, 0),
+		batches:            make(map[string]*state.Batch),
+		batchItems:         make(map[string][]state.BatchItem),
 	}
 }
 
@@ -800,6 +804,66 @@ func (m *mockStore) AppendEvent(ctx context.Context, event state.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *mockStore) CreateBatch(ctx context.Context, projectID int64, name string, directives []string) (string, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	batchID := fmt.Sprintf("batch-test-%d", len(m.batches)+1)
+	m.batches[batchID] = &state.Batch{
+		ID:         batchID,
+		ProjectID:  projectID,
+		Name:       name,
+		Status:     state.BatchStatusPending,
+		TotalItems: len(directives),
+	}
+	items := make([]state.BatchItem, len(directives))
+	for i, d := range directives {
+		items[i] = state.BatchItem{
+			ID:        int64(i + 1),
+			BatchID:   batchID,
+			Sequence:  i + 1,
+			Directive: d,
+			Status:    state.BatchItemStatusPending,
+		}
+	}
+	m.batchItems[batchID] = items
+	return batchID, nil
+}
+
+func (m *mockStore) GetBatch(ctx context.Context, batchID string) (*state.Batch, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.batches[batchID]
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	return b, nil
+}
+
+func (m *mockStore) GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items, ok := m.batchItems[batchID]
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	return items, nil
+}
+
+func (m *mockStore) UpdateBatchStatus(ctx context.Context, batchID, status string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.batches[batchID]
+	if !ok {
+		return state.ErrNotFound
+	}
+	b.Status = status
 	return nil
 }
 
