@@ -1254,6 +1254,72 @@ func TestCmdStartBatch_NotFound(t *testing.T) {
 	}
 }
 
+func TestCmdCancelBatch_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "cancel_batch", batchID)
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cancelled") {
+		t.Fatalf("expected cancelled message, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if store.batches[batchID].Status != state.BatchStatusPaused {
+		t.Fatalf("expected batch status paused, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdCancelBatch_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "cancel_batch", "")
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdCancelBatch_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "cancel_batch", "batch-nope")
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
+func TestCmdCancelBatch_AlreadyCompleted(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusCompleted
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "cancel_batch", batchID)
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "already completed") {
+		t.Fatalf("expected already completed message, got %q", msg)
+	}
+}
+
 func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	store := newMockStore(time.Now().UTC())
