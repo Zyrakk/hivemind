@@ -32,6 +32,9 @@ sessions/cache/*.log
 sessions/cache/*.code
 .gocache/
 
+# Worktrees
+.worktrees/
+
 # Other
 /plan/
 AGENTS.md
