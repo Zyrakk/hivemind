@@ -40,7 +40,7 @@ var (
 
 type PendingApproval struct {
 	ID          string
-	Type        string // "plan" | "pr" | "input"
+	Type        string // "plan" | "pr" | "input" | "roadmap"
 	ProjectID   string
 	Description string
 	AcceptsText bool
@@ -78,6 +78,10 @@ type plannerService interface {
 	plannerExecutor
 	plannerCreator
 	plannerRebuilder
+}
+
+type roadmapPlanner interface {
+	MetaPlan(ctx context.Context, projectRef, roadmap, feedback, cachedReconData string) (*planner.RoadmapResult, error)
 }
 
 type workerController interface {
@@ -119,6 +123,7 @@ type TelegramBot struct {
 	plannerRebuild plannerRebuilder
 	store          stateStore
 	plannerExec    plannerExecutor
+	roadmapPlanner roadmapPlanner
 	workers        workerController
 	consultants    []llm.ConsultantClient
 
@@ -140,6 +145,9 @@ type TelegramBot struct {
 	activeRuns        map[string]*RunHandle // keyed by planID
 	activeRunsMu      sync.Mutex
 
+	pendingRoadmaps   map[string]*planner.RoadmapResult // keyed by roadmap ID
+	pendingRoadmapsMu sync.RWMutex
+
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
 	startStopMu  sync.Mutex
@@ -150,7 +158,7 @@ type TelegramBot struct {
 func NewTelegramBot(
 	botToken string,
 	allowedChatID int64,
-	planner plannerService,
+	svc plannerService,
 	db *state.Store,
 	logger *slog.Logger,
 ) *TelegramBot {
@@ -164,10 +172,10 @@ func NewTelegramBot(
 		pendingApprovals: make(map[string]*PendingApproval),
 		outbox:           make(chan string, defaultOutboxBuffer),
 		logger:           logger,
-		plannerCreate:    planner,
-		plannerRebuild:   planner,
+		plannerCreate:    svc,
+		plannerRebuild:   svc,
 		store:            db,
-		plannerExec:      planner,
+		plannerExec:      svc,
 		nowFn:            time.Now,
 		approvalsTTL:     defaultApprovalsTTL,
 		prApprovalTTL:    defaultPRApprovalTTL,
@@ -178,6 +186,7 @@ func NewTelegramBot(
 		sendMessageFn:    nil,
 		outboxClosed:     false,
 		activeRuns:       make(map[string]*RunHandle),
+		pendingRoadmaps:  make(map[string]*planner.RoadmapResult),
 		lastProjectRefMu: sync.RWMutex{},
 		startStopMu:      sync.Mutex{},
 		approvalsMu:      sync.RWMutex{},
@@ -190,6 +199,13 @@ func (t *TelegramBot) SetWorkerController(workers workerController) {
 
 func (t *TelegramBot) SetConsultants(consultants []llm.ConsultantClient) {
 	t.consultants = consultants
+}
+
+func (t *TelegramBot) SetRoadmapPlanner(rp roadmapPlanner) {
+	if t == nil {
+		return
+	}
+	t.roadmapPlanner = rp
 }
 
 func (t *TelegramBot) SetInputResolver(resolver func(ctx context.Context, approval *PendingApproval, response string) error) {
@@ -2022,6 +2038,16 @@ func (t *TelegramBot) cleanupExpiredApprovals(now time.Time) int {
 			removed++
 		}
 	}
+
+	// Also clean up orphaned roadmaps whose approval has expired.
+	t.pendingRoadmapsMu.Lock()
+	for id := range t.pendingRoadmaps {
+		if _, exists := t.pendingApprovals[id]; !exists {
+			delete(t.pendingRoadmaps, id)
+		}
+	}
+	t.pendingRoadmapsMu.Unlock()
+
 	return removed
 }
 
