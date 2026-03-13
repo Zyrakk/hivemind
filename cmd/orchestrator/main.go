@@ -314,6 +314,15 @@ func main() {
 			if ccEngine != nil && ccEngine.UsageTracker() != nil {
 				telegramNotifier.SetUsageTracker(ccEngine.UsageTracker())
 			}
+			if ccEngine != nil && ccEngine.UsageTracker() != nil {
+				tracker := ccEngine.UsageTracker()
+				plannerService.SetCanInvoke(func() (bool, string) {
+					if tracker.CanInvoke() {
+						return true, ""
+					}
+					return false, tracker.BlockReason()
+				})
+			}
 			plannerService.SetNotifier(telegramNotifier)
 			evaluatorService.SetNotifier(telegramNotifier)
 			launcherService.SetNotifier(telegramNotifier)

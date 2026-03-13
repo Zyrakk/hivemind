@@ -906,7 +906,11 @@ func (t *TelegramBot) cmdCancelBatch(ctx context.Context, args string) (string, 
 	t.activeRunsMu.Unlock()
 	if running {
 		handle.Cancel()
-		<-handle.Done
+		select {
+		case <-handle.Done:
+		case <-time.After(30 * time.Second):
+			t.logger.Warn("batch cancellation timed out", "batchID", batchID)
+		}
 	}
 
 	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusPaused); err != nil {

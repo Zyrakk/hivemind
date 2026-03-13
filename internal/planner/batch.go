@@ -68,7 +68,9 @@ func (p *Planner) ExecuteBatch(ctx context.Context, batchID string) error {
 		if ci != nil {
 			allowed, reason := ci()
 			if !allowed {
-				_ = p.db.UpdateBatchStatus(ctx, batchID, state.BatchStatusPaused)
+				qctx, qcancel := pauseContext()
+				_ = p.db.UpdateBatchStatus(qctx, batchID, state.BatchStatusPaused)
+				qcancel()
 				return &ErrBatchPausedQuota{Reason: reason}
 			}
 		}
