@@ -445,6 +445,29 @@ func batchItemIcon(status string) string {
 	}
 }
 
+func FormatBatchCompletedMessage(projectRef, batchID string, totalItems int) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH COMPLETED ───────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Items:   %d/%d\n", totalItems, totalItems))
+	box.WriteString("│ Status:  done\n")
+	box.WriteString("└────────────────────────────")
+	return TruncateTelegramMessage(codeBlock(box.String()))
+}
+
+func FormatBatchFailedMessage(projectRef, batchID string, itemSeq int, errMsg string) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH PAUSED ──────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Failed:  item %d\n", itemSeq))
+	box.WriteString(fmt.Sprintf("│ Error:   %s\n", errMsg))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ /retry %s\n", batchID))
+	box.WriteString(fmt.Sprintf("│ /skip %s\n", batchID))
+	box.WriteString("└────────────────────────────")
+	return TruncateTelegramMessage(codeBlock(box.String()))
+}
+
 func FormatBatchStatusMessage(projectRef, batchID, status string, completed, total int, items []state.BatchItem) string {
 	statusLine := status
 	switch status {

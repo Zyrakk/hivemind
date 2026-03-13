@@ -824,6 +824,14 @@ func (t *TelegramBot) cmdStartBatch(ctx context.Context, args string) (string, e
 		return "", err
 	}
 
+	// Resolve project ref for display.
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, err := t.store.GetProjectDetail(ctx, projectRef); err == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
 	return formatEscapedLines(fmt.Sprintf("▸ Batch started. Executing directive 1/%d...", len(items))), nil
 }
 
@@ -846,6 +854,15 @@ func (t *TelegramBot) cmdCancelBatch(ctx context.Context, args string) (string, 
 
 	if batch.Status == state.BatchStatusCompleted {
 		return formatEscapedLines("✗ Batch already completed, cannot cancel."), nil
+	}
+
+	// Cancel active execution if running.
+	t.activeRunsMu.Lock()
+	handle, running := t.activeRuns[batchID]
+	t.activeRunsMu.Unlock()
+	if running {
+		handle.Cancel()
+		<-handle.Done
 	}
 
 	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusPaused); err != nil {
@@ -885,6 +902,107 @@ func (t *TelegramBot) cmdBatchStatus(ctx context.Context, args string) (string, 
 	}
 
 	return FormatBatchStatusMessage(projectRef, batchID, batch.Status, batch.CompletedItems, batch.TotalItems, items), nil
+}
+
+func (t *TelegramBot) startBatchExecution(batchID, projectRef string) {
+	go func() {
+		if t.plannerExec == nil {
+			_ = t.enqueueMessage(context.Background(), formatEscapedLines(
+				fmt.Sprintf("✗ Batch %s failed: planner is not configured", batchID),
+			))
+			return
+		}
+
+		runCtx, runCancel := context.WithCancel(context.Background())
+		handle := &RunHandle{
+			Cancel: runCancel,
+			Done:   make(chan error, 1),
+			PlanID: batchID, // reuse PlanID field for batch ID
+		}
+
+		t.activeRunsMu.Lock()
+		t.activeRuns[batchID] = handle
+		t.activeRunsMu.Unlock()
+
+		defer func() {
+			t.activeRunsMu.Lock()
+			delete(t.activeRuns, batchID)
+			t.activeRunsMu.Unlock()
+			runCancel()
+		}()
+
+		err := t.plannerExec.ExecuteBatch(runCtx, batchID)
+		handle.Done <- err
+
+		t.handleBatchResult(batchID, projectRef, err)
+	}()
+}
+
+func (t *TelegramBot) handleBatchResult(batchID, projectRef string, err error) {
+	ctx := context.Background()
+
+	switch {
+	case err == nil:
+		batch, _ := t.store.GetBatch(ctx, batchID)
+		total := 0
+		if batch != nil {
+			total = batch.TotalItems
+		}
+		_ = t.enqueueMessage(ctx, FormatBatchCompletedMessage(projectRef, batchID, total))
+
+	case err == context.Canceled:
+		// Silent — user already sent /cancel_batch.
+
+	default:
+		var quotaErr *planner.ErrBatchPausedQuota
+		var checkErr *planner.ErrBatchPausedChecklist
+		var itemErr *planner.ErrBatchItemFailed
+		var phaseErr *planner.ErrBatchPhaseDependency
+
+		switch {
+		case errors.As(err, &quotaErr):
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("⏸ Batch %s paused: %s. Will auto-resume when quota resets.", batchID, quotaErr.Reason),
+			))
+
+		case errors.As(err, &checkErr):
+			t.RegisterPendingApproval(PendingApproval{
+				ID:          checkErr.PlanID,
+				Type:        "plan",
+				ProjectID:   projectRef,
+				Description: fmt.Sprintf("batch %s item %d checklist", checkErr.BatchID, checkErr.ItemID),
+				AcceptsText: false,
+			})
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("⏸ Batch %s paused — item needs review:\n", batchID))
+			for _, c := range checkErr.Checks {
+				sb.WriteString(fmt.Sprintf("  • %s\n", c))
+			}
+			sb.WriteString(fmt.Sprintf("\n/approve %s", checkErr.PlanID))
+			_ = t.enqueueMessage(ctx, formatEscapedLines(sb.String()))
+
+		case errors.As(err, &itemErr):
+			items, _ := t.store.GetBatchItems(ctx, batchID)
+			seq := 0
+			errMsg := "unknown error"
+			for _, item := range items {
+				if item.ID == itemErr.ItemID {
+					seq = item.Sequence
+					if item.Error != nil {
+						errMsg = *item.Error
+					}
+					break
+				}
+			}
+			_ = t.enqueueMessage(ctx, FormatBatchFailedMessage(projectRef, batchID, seq, errMsg))
+
+		case errors.As(err, &phaseErr):
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("⏸ Batch %s paused: phase %q has failed items %v.\n/skip %s or fix and /retry %s",
+					batchID, phaseErr.Phase, phaseErr.FailedItems, batchID, batchID),
+			))
+		}
+	}
 }
 
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {

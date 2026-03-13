@@ -375,6 +375,24 @@ func TestFormatBatchCreatedMessage(t *testing.T) {
 	}
 }
 
+func TestFormatBatchCompletedMessage(t *testing.T) {
+	msg := FormatBatchCompletedMessage("flux", "batch-123", 4)
+	for _, want := range []string{"BATCH COMPLETED", "flux", "4/4", "┌", "└"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in: %s", want, msg)
+		}
+	}
+}
+
+func TestFormatBatchFailedMessage(t *testing.T) {
+	msg := FormatBatchFailedMessage("flux", "batch-123", 3, "worker crashed on item 3")
+	for _, want := range []string{"BATCH PAUSED", "flux", "worker crashed", "/retry", "/skip"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in: %s", want, msg)
+		}
+	}
+}
+
 func TestFormatBatchStatusMessage(t *testing.T) {
 	errMsg := "worker failed after 3 retries"
 	items := []state.BatchItem{
