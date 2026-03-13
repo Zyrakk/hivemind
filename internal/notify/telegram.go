@@ -1246,7 +1246,59 @@ func (t *TelegramBot) cmdApproveRoadmap(ctx context.Context, args string) (strin
 }
 
 func (t *TelegramBot) cmdRejectRoadmap(ctx context.Context, args string) (string, error) {
-	return formatEscapedLines("✗ Not yet implemented"), nil
+	parts := strings.SplitN(strings.TrimSpace(args), " ", 2)
+	if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+		return formatEscapedLines("Usage: /reject_roadmap {id} {feedback}"), nil
+	}
+
+	roadmapID := strings.TrimSpace(parts[0])
+	feedback := ""
+	if len(parts) > 1 {
+		feedback = strings.TrimSpace(parts[1])
+	}
+	if feedback == "" {
+		return formatEscapedLines("Please provide feedback. Usage: /reject_roadmap {id} {feedback}"), nil
+	}
+
+	if t.roadmapPlanner == nil {
+		return formatEscapedLines("✗ Meta-planner is not configured."), nil
+	}
+
+	t.pendingRoadmapsMu.RLock()
+	prev, ok := t.pendingRoadmaps[roadmapID]
+	t.pendingRoadmapsMu.RUnlock()
+
+	if !ok {
+		return formatEscapedLines(fmt.Sprintf("✗ Roadmap '%s' not found.", roadmapID)), nil
+	}
+
+	_ = t.enqueueMessage(ctx, formatEscapedLines(fmt.Sprintf("▸ Revising roadmap for %s...", prev.ProjectRef)))
+
+	// Re-call MetaPlan with feedback + cached recon data (no re-running recon).
+	revised, err := t.roadmapPlanner.MetaPlan(ctx, prev.ProjectRef, prev.Roadmap, feedback, prev.ReconData)
+	if err != nil {
+		return formatEscapedLines(fmt.Sprintf("✗ Roadmap revision failed: %s", err.Error())), nil
+	}
+
+	// Replace old roadmap with revised.
+	t.pendingRoadmapsMu.Lock()
+	delete(t.pendingRoadmaps, roadmapID)
+	t.pendingRoadmaps[revised.ID] = revised
+	t.pendingRoadmapsMu.Unlock()
+
+	// Replace old approval.
+	t.approvalsMu.Lock()
+	delete(t.pendingApprovals, roadmapID)
+	t.approvalsMu.Unlock()
+	t.RegisterPendingApproval(PendingApproval{
+		ID:          revised.ID,
+		Type:        "roadmap",
+		ProjectID:   prev.ProjectRef,
+		Description: prev.Roadmap,
+		AcceptsText: false,
+	})
+
+	return FormatRoadmapMessage(prev.ProjectRef, revised.ID, revised.Phases, revised.TotalDirectives, revised.ValidDirectives), nil
 }
 
 func (t *TelegramBot) startBatchExecution(batchID, projectRef string) {
