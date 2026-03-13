@@ -58,6 +58,10 @@ type plannerRecon interface {
 	RunInDir(ctx context.Context, dir string, commands []string) (*recon.Result, error)
 }
 
+type metaPlannerResolver interface {
+	MetaPlannerEngine(ctx context.Context) engine.MetaPlanner
+}
+
 type notifier interface {
 	NotifyNeedsInput(ctx context.Context, projectID, question, approvalID string) error
 	NotifyNeedsInputWithChecks(ctx context.Context, projectID, taskTitle, approvalID string, checks []checklist.CheckResult) error
@@ -106,9 +110,10 @@ type Planner struct {
 	launcher    plannerLauncher
 	evaluator   planEvaluator
 	notifier    notifier
-	engine      plannerEngine
-	recon       plannerRecon
-	db          *state.Store
+	engine               plannerEngine
+	recon                plannerRecon
+	metaPlannerResolver  metaPlannerResolver
+	db                   *state.Store
 	promptsDir  string
 	logger      *slog.Logger
 
@@ -201,6 +206,89 @@ func (p *Planner) SetRecon(r plannerRecon) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.recon = r
+}
+
+func (p *Planner) SetMetaPlannerResolver(r metaPlannerResolver) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.metaPlannerResolver = r
+}
+
+// MetaPlan decomposes a roadmap into phased directives. Runs recon, calls
+// the meta-planner engine, and validates each directive with L1.
+// Pass cachedReconData from a previous RoadmapResult on reject-and-revise
+// to skip re-running recon.
+func (p *Planner) MetaPlan(ctx context.Context, projectRef, roadmap, feedback, cachedReconData string) (*RoadmapResult, error) {
+	if p == nil {
+		return nil, fmt.Errorf("planner is nil")
+	}
+
+	p.mu.Lock()
+	resolver := p.metaPlannerResolver
+	rc := p.recon
+	p.mu.Unlock()
+
+	if resolver == nil {
+		return nil, fmt.Errorf("meta-planner resolver is not configured")
+	}
+	mp := resolver.MetaPlannerEngine(ctx)
+	if mp == nil {
+		return nil, fmt.Errorf("no meta-planner engine available (requires claude-code)")
+	}
+
+	agentsMD, err := readProjectAgents(projectRef)
+	if err != nil {
+		agentsMD = ""
+	}
+
+	reconData := cachedReconData
+	if reconData == "" && rc != nil {
+		// Run recon on first call; reject-and-revise passes cached data.
+		repoPath := resolveRepoPath(projectRef)
+		if repoPath != "" {
+			reconResult, reconErr := rc.RunDefault(ctx, repoPath)
+			if reconErr == nil && reconResult != nil {
+				reconData = reconResult.Output
+			}
+		}
+	}
+
+	result, err := mp.MetaPlan(ctx, engine.MetaPlanRequest{
+		ProjectName: projectRef,
+		AgentsMD:    agentsMD,
+		ReconData:   reconData,
+		Roadmap:     roadmap,
+		Feedback:    feedback,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("meta-plan: %w", err)
+	}
+
+	validated := ValidateMetaPlanDirectives(result)
+
+	total, valid := 0, 0
+	for _, phase := range validated {
+		for _, d := range phase.Directives {
+			total++
+			if d.Valid {
+				valid++
+			}
+		}
+	}
+
+	return &RoadmapResult{
+		ID:              generateRoadmapID(),
+		ProjectRef:      projectRef,
+		Phases:          validated,
+		ReconData:       reconData,
+		AgentsMD:        agentsMD,
+		Roadmap:         roadmap,
+		TotalDirectives: total,
+		ValidDirectives: valid,
+	}, nil
 }
 
 func (p *Planner) notifyProgress(ctx context.Context, project, taskID, stage, detail string) {

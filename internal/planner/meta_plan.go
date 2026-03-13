@@ -1,7 +1,9 @@
 package planner
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zyrakk/hivemind/internal/engine"
 )
@@ -53,6 +55,23 @@ func ValidateMetaPlanDirectives(result *engine.MetaPlanResult) []ValidatedPhase 
 	}
 
 	return phases
+}
+
+// RoadmapResult is returned by Planner.MetaPlan. Contains the raw engine
+// result, validated phases, and cached recon data for reject-and-revise.
+type RoadmapResult struct {
+	ID              string           `json:"id"`
+	ProjectRef      string           `json:"project_ref"`
+	Phases          []ValidatedPhase `json:"phases"`
+	ReconData       string           `json:"-"` // cached for re-use on reject
+	AgentsMD        string           `json:"-"` // cached for re-use on reject
+	Roadmap         string           `json:"roadmap"`
+	TotalDirectives int              `json:"total_directives"`
+	ValidDirectives int              `json:"valid_directives"`
+}
+
+func generateRoadmapID() string {
+	return fmt.Sprintf("roadmap-%d", time.Now().UnixNano())
 }
 
 // FlattenValidatedPhases converts validated phases into flat slices suitable
