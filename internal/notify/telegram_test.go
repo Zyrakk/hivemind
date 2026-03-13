@@ -1427,6 +1427,73 @@ func TestHyphenatedCommandFallback(t *testing.T) {
 	}
 }
 
+func TestCmdRetry_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+		"Add dry-run flag to the audit command",
+	})
+	// Simulate: batch paused, first item failed.
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusPaused
+	store.batchItems[batchID][0].Status = state.BatchItemStatusFailed
+	errMsg := "LLM unavailable"
+	store.batchItems[batchID][0].Error = &errMsg
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "retry", batchID)
+	if err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if !strings.Contains(msg, "Retrying") {
+		t.Fatalf("expected retry message, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if store.batchItems[batchID][0].Status != state.BatchItemStatusPending {
+		t.Fatalf("expected item reset to pending, got %q", store.batchItems[batchID][0].Status)
+	}
+	if store.batches[batchID].Status != state.BatchStatusRunning {
+		t.Fatalf("expected batch running, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdRetry_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "retry", "")
+	if err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage, got %q", msg)
+	}
+}
+
+func TestCmdRetry_NoFailedItem(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+	})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusPaused
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "retry", batchID)
+	if err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if !strings.Contains(msg, "no failed item") && !strings.Contains(msg, "No failed item") {
+		t.Fatalf("expected no failed item message, got %q", msg)
+	}
+}
+
 func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
 	ctx := context.Background()
 	store := newMockStore(time.Now().UTC())
