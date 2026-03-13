@@ -961,6 +961,59 @@ func (t *TelegramBot) cmdRetry(ctx context.Context, args string) (string, error)
 	return formatEscapedLines(fmt.Sprintf("▸ Retrying item %d...", failedItem.Sequence)), nil
 }
 
+func (t *TelegramBot) cmdSkip(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /skip {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+	if batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, not paused.", batch.Status)), nil
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+	var failedItem *state.BatchItem
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Status == state.BatchItemStatusFailed {
+			failedItem = &items[i]
+			break
+		}
+	}
+	if failedItem == nil {
+		return formatEscapedLines("✗ No failed item found to skip."), nil
+	}
+
+	if err := t.store.UpdateBatchItemStatus(ctx, failedItem.ID, state.BatchItemStatusSkipped, "", ""); err != nil {
+		return "", err
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
+	return formatEscapedLines(fmt.Sprintf("⊘ Skipped item %d. Continuing...", failedItem.Sequence)), nil
+}
+
 func (t *TelegramBot) startBatchExecution(batchID, projectRef string) {
 	go func() {
 		if t.plannerExec == nil {
@@ -1095,6 +1148,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdBatchStatus(ctx, args)
 	case "retry":
 		return t.cmdRetry(ctx, args)
+	case "skip":
+		return t.cmdSkip(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
