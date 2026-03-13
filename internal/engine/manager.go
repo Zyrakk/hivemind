@@ -130,6 +130,25 @@ func (m *Manager) ActiveEngine(ctx context.Context) string {
 	return "none"
 }
 
+// MetaPlannerEngine returns a MetaPlanner from the primary or fallback engine,
+// or nil if neither implements the interface. Checks availability.
+func (m *Manager) MetaPlannerEngine(ctx context.Context) MetaPlanner {
+	if m == nil {
+		return nil
+	}
+	if m.primary != nil && m.primary.Available(ctx) {
+		if mp, ok := m.primary.(MetaPlanner); ok {
+			return mp
+		}
+	}
+	if m.fallback != nil && m.fallback.Available(ctx) {
+		if mp, ok := m.fallback.(MetaPlanner); ok {
+			return mp
+		}
+	}
+	return nil
+}
+
 func (m *Manager) notifySwitch(from, to, reason string) {
 	if m == nil {
 		return
