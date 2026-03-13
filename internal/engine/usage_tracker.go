@@ -49,6 +49,8 @@ type UsageTracker struct {
 	alertSentDaily90 bool
 	alertSentWeekly  bool
 	onAlert          func(message string)
+	onResume         func() // called when quota transitions blocked → unblocked
+	wasBlocked       bool   // tracks previous blocked state for edge detection
 	logger           *slog.Logger
 	nowFn            func() time.Time
 }
@@ -100,6 +102,17 @@ func (t *UsageTracker) SetAlertCallback(fn func(string)) {
 	t.onAlert = fn
 }
 
+func (t *UsageTracker) OnResumeFromQuota(cb func()) {
+	if t == nil {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.onResume = cb
+}
+
 func (t *UsageTracker) Record(inputTokens, outputTokens int) {
 	if t == nil {
 		return
@@ -115,6 +128,7 @@ func (t *UsageTracker) Record(inputTokens, outputTokens int) {
 	t.dailyTokensOut += outputTokens
 	t.weeklyTokensIn += inputTokens
 	t.weeklyTokensOut += outputTokens
+	t.wasBlocked = t.dailyCalls >= t.config.HardLimitDaily || t.weeklyCalls >= t.config.HardLimitWeekly
 
 	alerts := t.collectAlertsLocked()
 	onAlert := t.onAlert
@@ -137,12 +151,22 @@ func (t *UsageTracker) CanInvoke() bool {
 	}
 
 	t.mu.Lock()
-	defer t.mu.Unlock()
 
 	t.resetIfNewDay()
 	t.resetIfNewWeek()
 
-	return t.dailyCalls < t.config.HardLimitDaily && t.weeklyCalls < t.config.HardLimitWeekly
+	allowed := t.dailyCalls < t.config.HardLimitDaily && t.weeklyCalls < t.config.HardLimitWeekly
+	wasBlocked := t.wasBlocked
+	t.wasBlocked = !allowed
+	onResume := t.onResume
+
+	t.mu.Unlock()
+
+	if allowed && wasBlocked && onResume != nil {
+		onResume()
+	}
+
+	return allowed
 }
 
 func (t *UsageTracker) BlockReason() string {
