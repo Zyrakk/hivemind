@@ -221,6 +221,207 @@ func TestExecuteBatch_PlanFailurePausesBatch(t *testing.T) {
 	}
 }
 
+func TestExecuteBatch_PhaseDependencyPausesBatch(t *testing.T) {
+	store, projectID, cleanup := setupBatchTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a batch with 3 items: two in phase "setup", one depending on "setup".
+	batchID, err := store.CreateBatch(ctx, projectID, "test-phase-dep", []string{
+		"Setup database schema",
+		"Seed test data",
+		"Run integration tests",
+	})
+	if err != nil {
+		t.Fatalf("CreateBatch: %v", err)
+	}
+
+	items, err := store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatchItems: %v", err)
+	}
+
+	// Assign phases: items 1 & 2 are phase "setup", item 3 depends on "setup".
+	if err := store.UpdateBatchItemPhase(ctx, items[0].ID, "setup", ""); err != nil {
+		t.Fatalf("UpdateBatchItemPhase item 1: %v", err)
+	}
+	if err := store.UpdateBatchItemPhase(ctx, items[1].ID, "setup", ""); err != nil {
+		t.Fatalf("UpdateBatchItemPhase item 2: %v", err)
+	}
+	if err := store.UpdateBatchItemPhase(ctx, items[2].ID, "test", "setup"); err != nil {
+		t.Fatalf("UpdateBatchItemPhase item 3: %v", err)
+	}
+
+	// Mark first two items as completed & failed respectively, so the third
+	// item's phase dependency check sees a failed item.
+	if err := store.UpdateBatchItemStatus(ctx, items[0].ID, state.BatchItemStatusCompleted, "", ""); err != nil {
+		t.Fatalf("UpdateBatchItemStatus item 1: %v", err)
+	}
+	if err := store.UpdateBatchItemStatus(ctx, items[1].ID, state.BatchItemStatusFailed, "", "seed failed"); err != nil {
+		t.Fatalf("UpdateBatchItemStatus item 2: %v", err)
+	}
+
+	if err := store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		t.Fatalf("UpdateBatchStatus: %v", err)
+	}
+
+	p, _, _ := newBatchPlanner(t, store)
+
+	err = p.ExecuteBatch(ctx, batchID)
+
+	var phaseErr *ErrBatchPhaseDependency
+	if !errors.As(err, &phaseErr) {
+		t.Fatalf("expected ErrBatchPhaseDependency, got: %v", err)
+	}
+	if phaseErr.Phase != "setup" {
+		t.Errorf("phase = %q, want %q", phaseErr.Phase, "setup")
+	}
+
+	batch, err := store.GetBatch(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if batch.Status != state.BatchStatusPaused {
+		t.Errorf("batch status = %q, want %q", batch.Status, state.BatchStatusPaused)
+	}
+}
+
+func TestExecuteBatch_ChecklistPausesBatch(t *testing.T) {
+	store, projectID, cleanup := setupBatchTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	batchID, err := store.CreateBatch(ctx, projectID, "test-checklist", []string{
+		"Add a new dashboard UI component with accessibility compliance checks included",
+	})
+	if err != nil {
+		t.Fatalf("CreateBatch: %v", err)
+	}
+	if err := store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		t.Fatalf("UpdateBatchStatus: %v", err)
+	}
+
+	// Configure the mock GLM to return a plan with UserChecklist items.
+	p, _, _ := newBatchPlanner(t, store, func(glm *mockPlannerGLM, _ *mockPlannerLauncher) {
+		glm.plans = []*llm.TaskPlan{
+			{
+				Confidence: 0.95,
+				Tasks: []llm.Task{
+					{
+						ID:          "task-ui",
+						Title:       "Deploy UI",
+						Description: "Deploy the new UI component",
+						BranchName:  "deploy-ui",
+						UserChecklist: []llm.CheckItem{
+							{ID: "chk-1", Description: "Verify layout renders correctly"},
+							{ID: "chk-2", Description: "Check accessibility compliance"},
+						},
+					},
+				},
+			},
+		}
+	})
+
+	err = p.ExecuteBatch(ctx, batchID)
+
+	var checkErr *ErrBatchPausedChecklist
+	if !errors.As(err, &checkErr) {
+		t.Fatalf("expected ErrBatchPausedChecklist, got: %v", err)
+	}
+	if len(checkErr.Checks) != 2 {
+		t.Fatalf("expected 2 checks, got %d", len(checkErr.Checks))
+	}
+	if checkErr.Checks[0] != "Verify layout renders correctly" {
+		t.Errorf("checks[0] = %q, want %q", checkErr.Checks[0], "Verify layout renders correctly")
+	}
+	if checkErr.Checks[1] != "Check accessibility compliance" {
+		t.Errorf("checks[1] = %q, want %q", checkErr.Checks[1], "Check accessibility compliance")
+	}
+
+	batch, err := store.GetBatch(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if batch.Status != state.BatchStatusPaused {
+		t.Errorf("batch status = %q, want %q", batch.Status, state.BatchStatusPaused)
+	}
+
+	// Item should be reset to pending (so it can be resumed later).
+	items, err := store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatchItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Status != state.BatchItemStatusPending {
+		t.Errorf("item status = %q, want %q", items[0].Status, state.BatchItemStatusPending)
+	}
+}
+
+func TestExecuteBatch_ExecFailurePausesBatch(t *testing.T) {
+	store, projectID, cleanup := setupBatchTestEnv(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	batchID, err := store.CreateBatch(ctx, projectID, "test-exec-fail", []string{
+		"Run flaky integration test",
+	})
+	if err != nil {
+		t.Fatalf("CreateBatch: %v", err)
+	}
+	if err := store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		t.Fatalf("UpdateBatchStatus: %v", err)
+	}
+
+	// CreatePlan succeeds (GLM returns a valid plan), but ExecutePlan fails
+	// because the launcher completes the worker with a failed status.
+	p, _, _ := newBatchPlanner(t, store, func(glm *mockPlannerGLM, launch *mockPlannerLauncher) {
+		glm.plans = []*llm.TaskPlan{
+			{
+				Confidence: 0.95,
+				Tasks: []llm.Task{
+					{ID: "task-1", Title: "Run tests", Description: "run flaky tests", BranchName: "flaky"},
+				},
+			},
+		}
+		launch.completionStatus = state.WorkerStatusFailed
+		launch.completionError = "worker exited with code 1"
+	})
+
+	err = p.ExecuteBatch(ctx, batchID)
+
+	var itemErr *ErrBatchItemFailed
+	if !errors.As(err, &itemErr) {
+		t.Fatalf("expected ErrBatchItemFailed, got: %v", err)
+	}
+
+	batch, err := store.GetBatch(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatch: %v", err)
+	}
+	if batch.Status != state.BatchStatusPaused {
+		t.Errorf("batch status = %q, want %q", batch.Status, state.BatchStatusPaused)
+	}
+
+	items, err := store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		t.Fatalf("GetBatchItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+	if items[0].Status != state.BatchItemStatusFailed {
+		t.Errorf("item status = %q, want %q", items[0].Status, state.BatchItemStatusFailed)
+	}
+	if items[0].Error == nil || *items[0].Error == "" {
+		t.Error("expected item to have error message")
+	}
+}
+
 func TestPlanHasUserChecklist(t *testing.T) {
 	t.Run("no checklist", func(t *testing.T) {
 		plan := &llm.TaskPlan{

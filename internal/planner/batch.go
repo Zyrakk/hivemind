@@ -203,6 +203,12 @@ func (p *Planner) checkPhaseDeps(ctx context.Context, batchID string, item *stat
 		if other.Status == state.BatchItemStatusFailed || other.Status == state.BatchItemStatusSkipped {
 			failedItems = append(failedItems, other.ID)
 		}
+		// Defensive: if any items in the dependent phase are still non-terminal, don't proceed
+		if other.Status != state.BatchItemStatusCompleted &&
+			other.Status != state.BatchItemStatusFailed &&
+			other.Status != state.BatchItemStatusSkipped {
+			return fmt.Errorf("phase %q item %d not yet terminal (status: %s)", *item.PhaseDependsOn, other.Sequence, other.Status)
+		}
 	}
 
 	if len(failedItems) > 0 {

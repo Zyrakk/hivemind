@@ -1349,6 +1349,37 @@ func (s *Store) UpdateBatchItemStatus(ctx context.Context, itemID int64, status,
 	return nil
 }
 
+// UpdateBatchItemPhase sets the phase and phase_depends_on fields on a batch item.
+func (s *Store) UpdateBatchItemPhase(ctx context.Context, itemID int64, phase, phaseDependsOn string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	var phaseVal, depVal any
+	if strings.TrimSpace(phase) != "" {
+		phaseVal = phase
+	}
+	if strings.TrimSpace(phaseDependsOn) != "" {
+		depVal = phaseDependsOn
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE batch_items SET phase = ?, phase_depends_on = ? WHERE id = ?`,
+		phaseVal, depVal, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("update batch item phase: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected (batch item phase): %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) GetNextPendingBatchItem(ctx context.Context, batchID string) (*BatchItem, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
