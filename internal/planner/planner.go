@@ -112,8 +112,9 @@ type Planner struct {
 	promptsDir  string
 	logger      *slog.Logger
 
-	mu       sync.Mutex
-	planByID map[string]storedPlan
+	mu        sync.Mutex
+	planByID  map[string]storedPlan
+	canInvoke func() (bool, string) // returns (allowed, blockReason)
 }
 
 func New(
@@ -181,6 +182,15 @@ func (p *Planner) SetEngine(e plannerEngine) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.engine = e
+}
+
+func (p *Planner) SetCanInvoke(fn func() (bool, string)) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.canInvoke = fn
 }
 
 func (p *Planner) SetRecon(r plannerRecon) {

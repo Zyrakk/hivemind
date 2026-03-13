@@ -328,6 +328,53 @@ func TestDefaultLimits(t *testing.T) {
 	}
 }
 
+func TestOnResumeFromQuota(t *testing.T) {
+	t.Parallel()
+
+	cfg := UsageTrackerConfig{
+		SoftLimitDaily:  2,
+		HardLimitDaily:  3,
+		SoftLimitWeekly: 10,
+		HardLimitWeekly: 15,
+	}
+	tracker, current := newTestUsageTracker(cfg)
+
+	resumed := false
+	tracker.OnResumeFromQuota(func() {
+		resumed = true
+	})
+
+	// Record up to hard limit.
+	tracker.Record(100, 50)
+	tracker.Record(100, 50)
+	tracker.Record(100, 50)
+
+	if tracker.CanInvoke() {
+		t.Fatal("expected blocked at hard limit")
+	}
+	if resumed {
+		t.Fatal("should not have resumed yet")
+	}
+
+	// Simulate day rollover by advancing time.
+	*current = current.Add(25 * time.Hour)
+
+	// CanInvoke resets counters on new day -> should trigger resume.
+	if !tracker.CanInvoke() {
+		t.Fatal("expected unblocked after day reset")
+	}
+	if !resumed {
+		t.Fatal("expected resume callback to fire after quota reset")
+	}
+}
+
+func TestOnResumeFromQuota_NilTracker(t *testing.T) {
+	t.Parallel()
+
+	var tracker *UsageTracker
+	tracker.OnResumeFromQuota(func() {}) // should not panic
+}
+
 func newTestUsageTracker(cfg UsageTrackerConfig) (*UsageTracker, *time.Time) {
 	current := time.Date(2026, time.March, 6, 10, 0, 0, 0, time.UTC)
 	tracker := NewUsageTracker(cfg, nil)

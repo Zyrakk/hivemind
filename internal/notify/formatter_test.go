@@ -123,7 +123,7 @@ func TestFormatStatusAndPendingMessages(t *testing.T) {
 
 func TestFormatHelpMessage(t *testing.T) {
 	help := FormatHelpMessage()
-	for _, want := range []string{"/status", "/help", "/run", "/batch", "/start_batch", "/cancel_batch", "/batch_status", "HIVEMIND COMMANDS", "┌", "└"} {
+	for _, want := range []string{"/status", "/help", "/run", "/batch", "/start_batch", "/cancel_batch", "/batch_status", "/retry", "/skip", "/resume_batch", "HIVEMIND COMMANDS", "┌", "└"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("expected %q in help message:\n%s", want, help)
 		}
@@ -372,6 +372,24 @@ func TestFormatBatchCreatedMessage(t *testing.T) {
 	}
 	if len([]rune(msg)) > telegramMessageLimit {
 		t.Fatalf("message exceeds telegram limit")
+	}
+}
+
+func TestFormatBatchCompletedMessage(t *testing.T) {
+	msg := FormatBatchCompletedMessage("flux", "batch-123", 4)
+	for _, want := range []string{"BATCH COMPLETED", "flux", "4/4", "┌", "└"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in: %s", want, msg)
+		}
+	}
+}
+
+func TestFormatBatchFailedMessage(t *testing.T) {
+	msg := FormatBatchFailedMessage("flux", "batch-123", 3, "worker crashed on item 3")
+	for _, want := range []string{"BATCH PAUSED", "flux", "worker crashed", "/retry", "/skip"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in: %s", want, msg)
+		}
 	}
 }
 

@@ -347,6 +347,9 @@ func FormatHelpMessage() string {
 	box.WriteString("│ /start_batch {id} start batch\n")
 	box.WriteString("│ /cancel_batch {id} cancel batch\n")
 	box.WriteString("│ /batch_status {id} batch progress\n")
+	box.WriteString("│ /retry {id}       retry failed item\n")
+	box.WriteString("│ /skip {id}        skip failed item\n")
+	box.WriteString("│ /resume_batch {id} resume paused batch\n")
 	box.WriteString("│ /approve {id}     approve item\n")
 	box.WriteString("│ /reject {id}      reject + reason\n")
 	box.WriteString("│ /pause {p}        pause project\n")
@@ -443,6 +446,29 @@ func batchItemIcon(status string) string {
 	default:
 		return "◻"
 	}
+}
+
+func FormatBatchCompletedMessage(projectRef, batchID string, totalItems int) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH COMPLETED ───────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Items:   %d/%d\n", totalItems, totalItems))
+	box.WriteString("│ Status:  done\n")
+	box.WriteString("└────────────────────────────")
+	return TruncateTelegramMessage(codeBlock(box.String()))
+}
+
+func FormatBatchFailedMessage(projectRef, batchID string, itemSeq int, errMsg string) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH PAUSED ──────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Failed:  item %d\n", itemSeq))
+	box.WriteString(fmt.Sprintf("│ Error:   %s\n", errMsg))
+	box.WriteString("├────────────────────────────\n")
+	box.WriteString(fmt.Sprintf("│ /retry %s\n", batchID))
+	box.WriteString(fmt.Sprintf("│ /skip %s\n", batchID))
+	box.WriteString("└────────────────────────────")
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatBatchStatusMessage(projectRef, batchID, status string, completed, total int, items []state.BatchItem) string {

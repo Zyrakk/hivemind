@@ -57,6 +57,13 @@ type RunHandle struct {
 
 type plannerExecutor interface {
 	ExecutePlan(ctx context.Context, planID string) error
+	ExecuteBatch(ctx context.Context, batchID string) error
+}
+
+// quotaTracker allows the TelegramBot to register a callback that fires
+// when the usage tracker transitions from quota-blocked to unblocked.
+type quotaTracker interface {
+	OnResumeFromQuota(cb func())
 }
 
 type plannerCreator interface {
@@ -92,6 +99,9 @@ type stateStore interface {
 	GetBatch(ctx context.Context, batchID string) (*state.Batch, error)
 	GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error)
 	UpdateBatchStatus(ctx context.Context, batchID, status string) error
+	UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error
+	GetRunningBatches(ctx context.Context) ([]state.Batch, error)
+	GetPausedBatches(ctx context.Context) ([]state.Batch, error)
 }
 
 type TelegramBot struct {
@@ -183,6 +193,43 @@ func (t *TelegramBot) SetConsultants(consultants []llm.ConsultantClient) {
 
 func (t *TelegramBot) SetInputResolver(resolver func(ctx context.Context, approval *PendingApproval, response string) error) {
 	t.inputResolver = resolver
+}
+
+// SetUsageTracker registers a callback with the given quota tracker so that
+// paused batches are automatically resumed when quota becomes available.
+func (t *TelegramBot) SetUsageTracker(tracker quotaTracker) {
+	if t == nil || tracker == nil {
+		return
+	}
+	tracker.OnResumeFromQuota(func() {
+		t.resumeQuotaPausedBatches()
+	})
+}
+
+func (t *TelegramBot) resumeQuotaPausedBatches() {
+	if t.store == nil {
+		return
+	}
+	ctx := context.Background()
+	batches, err := t.store.GetPausedBatches(ctx)
+	if err != nil {
+		t.logger.Warn("failed to get paused batches for quota resume", "error", err)
+		return
+	}
+	for _, batch := range batches {
+		projectRef := fmt.Sprintf("%d", batch.ProjectID)
+		if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+			projectRef = detail.ProjectRef
+		}
+		if err := t.store.UpdateBatchStatus(ctx, batch.ID, state.BatchStatusRunning); err != nil {
+			t.logger.Warn("failed to resume batch", "batchID", batch.ID, "error", err)
+			continue
+		}
+		t.startBatchExecution(batch.ID, projectRef)
+		_ = t.enqueueMessage(ctx, formatEscapedLines(
+			fmt.Sprintf("▸ Quota restored — auto-resuming batch %s", batch.ID),
+		))
+	}
 }
 
 func (t *TelegramBot) Start(ctx context.Context) error {
@@ -821,6 +868,14 @@ func (t *TelegramBot) cmdStartBatch(ctx context.Context, args string) (string, e
 		return "", err
 	}
 
+	// Resolve project ref for display.
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, err := t.store.GetProjectDetail(ctx, projectRef); err == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
 	return formatEscapedLines(fmt.Sprintf("▸ Batch started. Executing directive 1/%d...", len(items))), nil
 }
 
@@ -843,6 +898,19 @@ func (t *TelegramBot) cmdCancelBatch(ctx context.Context, args string) (string, 
 
 	if batch.Status == state.BatchStatusCompleted {
 		return formatEscapedLines("✗ Batch already completed, cannot cancel."), nil
+	}
+
+	// Cancel active execution if running.
+	t.activeRunsMu.Lock()
+	handle, running := t.activeRuns[batchID]
+	t.activeRunsMu.Unlock()
+	if running {
+		handle.Cancel()
+		select {
+		case <-handle.Done:
+		case <-time.After(30 * time.Second):
+			t.logger.Warn("batch cancellation timed out", "batchID", batchID)
+		}
 	}
 
 	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusPaused); err != nil {
@@ -884,6 +952,256 @@ func (t *TelegramBot) cmdBatchStatus(ctx context.Context, args string) (string, 
 	return FormatBatchStatusMessage(projectRef, batchID, batch.Status, batch.CompletedItems, batch.TotalItems, items), nil
 }
 
+func (t *TelegramBot) cmdRetry(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /retry {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+	if batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, not paused.", batch.Status)), nil
+	}
+
+	// Find last failed item.
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+	var failedItem *state.BatchItem
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Status == state.BatchItemStatusFailed {
+			failedItem = &items[i]
+			break
+		}
+	}
+	if failedItem == nil {
+		return formatEscapedLines("✗ No failed item found to retry."), nil
+	}
+
+	// Reset failed item to pending.
+	if err := t.store.UpdateBatchItemStatus(ctx, failedItem.ID, state.BatchItemStatusPending, "", ""); err != nil {
+		return "", err
+	}
+
+	// Set batch to running.
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	// Resolve project ref.
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
+	return formatEscapedLines(fmt.Sprintf("▸ Retrying item %d...", failedItem.Sequence)), nil
+}
+
+func (t *TelegramBot) cmdSkip(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /skip {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+	if batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, not paused.", batch.Status)), nil
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+	var failedItem *state.BatchItem
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].Status == state.BatchItemStatusFailed {
+			failedItem = &items[i]
+			break
+		}
+	}
+	if failedItem == nil {
+		return formatEscapedLines("✗ No failed item found to skip."), nil
+	}
+
+	if err := t.store.UpdateBatchItemStatus(ctx, failedItem.ID, state.BatchItemStatusSkipped, "", ""); err != nil {
+		return "", err
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
+	return formatEscapedLines(fmt.Sprintf("⊘ Skipped item %d. Continuing...", failedItem.Sequence)), nil
+}
+
+func (t *TelegramBot) cmdResumeBatch(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /resume_batch {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+	if batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, not paused.", batch.Status)), nil
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	t.startBatchExecution(batchID, projectRef)
+
+	return formatEscapedLines(fmt.Sprintf("▸ Resuming batch %s...", batchID)), nil
+}
+
+func (t *TelegramBot) startBatchExecution(batchID, projectRef string) {
+	go func() {
+		if t.plannerExec == nil {
+			_ = t.enqueueMessage(context.Background(), formatEscapedLines(
+				fmt.Sprintf("✗ Batch %s failed: planner is not configured", batchID),
+			))
+			return
+		}
+
+		runCtx, runCancel := context.WithCancel(context.Background())
+		handle := &RunHandle{
+			Cancel: runCancel,
+			Done:   make(chan error, 1),
+			PlanID: batchID, // reuse PlanID field for batch ID
+		}
+
+		t.activeRunsMu.Lock()
+		t.activeRuns[batchID] = handle
+		t.activeRunsMu.Unlock()
+
+		defer func() {
+			t.activeRunsMu.Lock()
+			delete(t.activeRuns, batchID)
+			t.activeRunsMu.Unlock()
+			runCancel()
+		}()
+
+		err := t.plannerExec.ExecuteBatch(runCtx, batchID)
+		handle.Done <- err
+
+		t.handleBatchResult(batchID, projectRef, err)
+	}()
+}
+
+func (t *TelegramBot) handleBatchResult(batchID, projectRef string, err error) {
+	ctx := context.Background()
+
+	switch {
+	case err == nil:
+		batch, _ := t.store.GetBatch(ctx, batchID)
+		total := 0
+		if batch != nil {
+			total = batch.TotalItems
+		}
+		_ = t.enqueueMessage(ctx, FormatBatchCompletedMessage(projectRef, batchID, total))
+
+	case errors.Is(err, context.Canceled):
+		// Silent — user already sent /cancel_batch.
+
+	default:
+		var quotaErr *planner.ErrBatchPausedQuota
+		var checkErr *planner.ErrBatchPausedChecklist
+		var itemErr *planner.ErrBatchItemFailed
+		var phaseErr *planner.ErrBatchPhaseDependency
+
+		switch {
+		case errors.As(err, &quotaErr):
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("⏸ Batch %s paused: %s. Will auto-resume when quota resets.", batchID, quotaErr.Reason),
+			))
+
+		case errors.As(err, &checkErr):
+			t.RegisterPendingApproval(PendingApproval{
+				ID:          checkErr.PlanID,
+				Type:        "plan",
+				ProjectID:   projectRef,
+				Description: fmt.Sprintf("batch %s item %d checklist", checkErr.BatchID, checkErr.ItemID),
+				AcceptsText: false,
+			})
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("⏸ Batch %s paused — item needs review:\n", batchID))
+			for _, c := range checkErr.Checks {
+				sb.WriteString(fmt.Sprintf("  • %s\n", c))
+			}
+			sb.WriteString(fmt.Sprintf("\n/approve %s", checkErr.PlanID))
+			_ = t.enqueueMessage(ctx, formatEscapedLines(sb.String()))
+
+		case errors.As(err, &itemErr):
+			items, _ := t.store.GetBatchItems(ctx, batchID)
+			seq := 0
+			errMsg := "unknown error"
+			for _, item := range items {
+				if item.ID == itemErr.ItemID {
+					seq = item.Sequence
+					if item.Error != nil {
+						errMsg = *item.Error
+					}
+					break
+				}
+			}
+			_ = t.enqueueMessage(ctx, FormatBatchFailedMessage(projectRef, batchID, seq, errMsg))
+
+		case errors.As(err, &phaseErr):
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("⏸ Batch %s paused: phase %q has failed items %v.\n/skip %s or fix and /retry %s",
+					batchID, phaseErr.Phase, phaseErr.FailedItems, batchID, batchID),
+			))
+
+		default:
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("✗ Batch %s failed: %v", batchID, err),
+			))
+		}
+	}
+}
+
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "status":
@@ -910,6 +1228,12 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdCancelBatch(ctx, args)
 	case "batch_status":
 		return t.cmdBatchStatus(ctx, args)
+	case "resume_batch":
+		return t.cmdResumeBatch(ctx, args)
+	case "retry":
+		return t.cmdRetry(ctx, args)
+	case "skip":
+		return t.cmdSkip(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
