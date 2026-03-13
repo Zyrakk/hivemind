@@ -88,6 +88,10 @@ type stateStore interface {
 	UpdateTask(ctx context.Context, taskID int64, update state.TaskUpdate) error
 	UpdateWorker(ctx context.Context, workerID int64, update state.WorkerUpdate) error
 	AppendEvent(ctx context.Context, event state.Event) error
+	CreateBatch(ctx context.Context, projectID int64, name string, directives []string) (string, error)
+	GetBatch(ctx context.Context, batchID string) (*state.Batch, error)
+	GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error)
+	UpdateBatchStatus(ctx context.Context, batchID, status string) error
 }
 
 type TelegramBot struct {
@@ -696,6 +700,190 @@ func inboundMessage(update tgbotapi.Update) *tgbotapi.Message {
 	return nil
 }
 
+func parseBatchArgs(args string) (projectRef string, directives []string) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return "", nil
+	}
+
+	lines := strings.Split(args, "\n")
+	firstLine := strings.TrimSpace(lines[0])
+	if firstLine == "" {
+		return "", nil
+	}
+
+	parts := strings.SplitN(firstLine, " ", 2)
+	projectRef = strings.TrimSpace(parts[0])
+
+	if len(parts) > 1 {
+		remaining := strings.TrimSpace(parts[1])
+		if strings.Contains(remaining, "|") {
+			for _, d := range strings.Split(remaining, "|") {
+				d = strings.TrimSpace(d)
+				if d != "" {
+					directives = append(directives, d)
+				}
+			}
+		} else if remaining != "" {
+			directives = append(directives, remaining)
+		}
+	}
+
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			directives = append(directives, line)
+		}
+	}
+
+	return projectRef, directives
+}
+
+func (t *TelegramBot) cmdBatch(ctx context.Context, args string) (string, error) {
+	projectRef, directives := parseBatchArgs(args)
+	if projectRef == "" || len(directives) == 0 {
+		return formatEscapedLines(
+			"Usage: /batch {project} {directive 1} | {directive 2}",
+			"Or multiline:",
+			"  /batch {project}",
+			"  directive 1",
+			"  directive 2",
+		), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	projectID, err := t.store.ResolveProjectID(ctx, projectRef)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Project '%s' not found.", projectRef)), nil
+		}
+		return "", err
+	}
+
+	var validationErrors []string
+	cleaned := make([]string, 0, len(directives))
+	for i, d := range directives {
+		c, valErr := planner.ValidateDirective(d)
+		if valErr != nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("%d: %s", i+1, valErr.Error()))
+		} else {
+			cleaned = append(cleaned, c)
+		}
+	}
+
+	if len(validationErrors) > 0 {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("✗ %d of %d directives invalid:\n", len(validationErrors), len(directives)))
+		for _, e := range validationErrors {
+			sb.WriteString(fmt.Sprintf("  %s\n", e))
+		}
+		return formatEscapedLines(sb.String()), nil
+	}
+
+	batchID, err := t.store.CreateBatch(ctx, projectID, "", cleaned)
+	if err != nil {
+		return "", err
+	}
+
+	t.setLastProjectRef(projectRef)
+	return FormatBatchCreatedMessage(projectRef, batchID, cleaned), nil
+}
+
+func (t *TelegramBot) cmdStartBatch(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /start_batch {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+
+	if batch.Status != state.BatchStatusPending && batch.Status != state.BatchStatusPaused {
+		return formatEscapedLines(fmt.Sprintf("✗ Batch is %s, cannot start.", batch.Status)), nil
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusRunning); err != nil {
+		return "", err
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+
+	return formatEscapedLines(fmt.Sprintf("▸ Batch started. Executing directive 1/%d...", len(items))), nil
+}
+
+func (t *TelegramBot) cmdCancelBatch(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /cancel_batch {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+
+	if batch.Status == state.BatchStatusCompleted {
+		return formatEscapedLines("✗ Batch already completed, cannot cancel."), nil
+	}
+
+	if err := t.store.UpdateBatchStatus(ctx, batchID, state.BatchStatusPaused); err != nil {
+		return "", err
+	}
+
+	return formatEscapedLines(fmt.Sprintf("✓ Batch %s cancelled.", batchID)), nil
+}
+
+func (t *TelegramBot) cmdBatchStatus(ctx context.Context, args string) (string, error) {
+	batchID := strings.TrimSpace(args)
+	if batchID == "" {
+		return formatEscapedLines("Usage: /batch_status {batch-id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	batch, err := t.store.GetBatch(ctx, batchID)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Batch '%s' not found.", batchID)), nil
+		}
+		return "", err
+	}
+
+	items, err := t.store.GetBatchItems(ctx, batchID)
+	if err != nil {
+		return "", err
+	}
+
+	// Resolve project ref from project ID for display.
+	projectRef := fmt.Sprintf("%d", batch.ProjectID)
+	detail, detailErr := t.store.GetProjectDetail(ctx, projectRef)
+	if detailErr == nil && detail.ProjectRef != "" {
+		projectRef = detail.ProjectRef
+	}
+
+	return FormatBatchStatusMessage(projectRef, batchID, batch.Status, batch.CompletedItems, batch.TotalItems, items), nil
+}
+
 func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "status":
@@ -714,6 +902,14 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdResume(ctx, args)
 	case "consult":
 		return t.cmdConsult(ctx, args)
+	case "batch":
+		return t.cmdBatch(ctx, args)
+	case "start_batch":
+		return t.cmdStartBatch(ctx, args)
+	case "cancel_batch":
+		return t.cmdCancelBatch(ctx, args)
+	case "batch_status":
+		return t.cmdBatchStatus(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
@@ -726,6 +922,22 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 func (t *TelegramBot) handleFreeText(ctx context.Context, text string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", nil
+	}
+
+	// Fallback: Telegram doesn't create command entities for hyphenated
+	// commands like /start-batch. Normalize hyphens to underscores and
+	// re-dispatch as a regular command.
+	if strings.HasPrefix(text, "/") {
+		first := strings.SplitN(text, " ", 2)
+		cmd := strings.TrimPrefix(first[0], "/")
+		if strings.Contains(cmd, "-") {
+			cmd = strings.ReplaceAll(cmd, "-", "_")
+			args := ""
+			if len(first) > 1 {
+				args = strings.TrimSpace(first[1])
+			}
+			return t.handleCommand(ctx, cmd, args)
+		}
 	}
 
 	approval := t.findLatestTextApproval()

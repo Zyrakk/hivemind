@@ -123,7 +123,7 @@ func TestFormatStatusAndPendingMessages(t *testing.T) {
 
 func TestFormatHelpMessage(t *testing.T) {
 	help := FormatHelpMessage()
-	for _, want := range []string{"/status", "/help", "/run", "HIVEMIND COMMANDS", "┌", "└"} {
+	for _, want := range []string{"/status", "/help", "/run", "/batch", "/start_batch", "/cancel_batch", "/batch_status", "HIVEMIND COMMANDS", "┌", "└"} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("expected %q in help message:\n%s", want, help)
 		}
@@ -345,6 +345,81 @@ func TestRenderProgressTimeline_TruncatesLongTimeline(t *testing.T) {
 	got := RenderProgressTimeline(tl)
 	if len([]rune(got)) > 4096 {
 		t.Fatalf("rendered timeline exceeds 4096 chars: %d", len([]rune(got)))
+	}
+}
+
+func TestFormatBatchCreatedMessage(t *testing.T) {
+	msg := FormatBatchCreatedMessage("nhi-watch", "batch-123", []string{
+		"Add YAML config parser for scoring rules",
+		"Add --dry-run flag to the audit command",
+		"Add --json output flag to the audit command",
+		"Add CSV export to the reporter module",
+	})
+	for _, want := range []string{
+		"BATCH CREATED",
+		"nhi-watch",
+		"Items:   4",
+		"ready",
+		"1 ◻ Add YAML config",
+		"4 ◻ Add CSV export",
+		"/start_batch batch-123",
+		"/cancel_batch batch-123",
+		"┌", "└", "```",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in message:\n%s", want, msg)
+		}
+	}
+	if len([]rune(msg)) > telegramMessageLimit {
+		t.Fatalf("message exceeds telegram limit")
+	}
+}
+
+func TestFormatBatchStatusMessage(t *testing.T) {
+	errMsg := "worker failed after 3 retries"
+	items := []state.BatchItem{
+		{Sequence: 1, Directive: "Add YAML config parser", Status: state.BatchItemStatusCompleted},
+		{Sequence: 2, Directive: "Add --dry-run flag", Status: state.BatchItemStatusCompleted},
+		{Sequence: 3, Directive: "Add --json output flag", Status: state.BatchItemStatusFailed, Error: &errMsg},
+		{Sequence: 4, Directive: "Add CSV export", Status: state.BatchItemStatusPending},
+	}
+	msg := FormatBatchStatusMessage("nhi-watch", "batch-123", state.BatchStatusRunning, 2, 4, items)
+	for _, want := range []string{
+		"BATCH STATUS",
+		"nhi-watch",
+		"running (2/4)",
+		"1 ✓ Add YAML config",
+		"2 ✓ Add --dry-run",
+		"3 ✗ Add --json output",
+		"worker failed",
+		"4 ◻ Add CSV export",
+		"┌", "└", "```",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected %q in message:\n%s", want, msg)
+		}
+	}
+	if len([]rune(msg)) > telegramMessageLimit {
+		t.Fatalf("message exceeds telegram limit")
+	}
+}
+
+func TestBatchItemIcon(t *testing.T) {
+	cases := []struct {
+		status string
+		want   string
+	}{
+		{state.BatchItemStatusPending, "◻"},
+		{state.BatchItemStatusRunning, "▸"},
+		{state.BatchItemStatusCompleted, "✓"},
+		{state.BatchItemStatusFailed, "✗"},
+		{state.BatchItemStatusSkipped, "⊘"},
+	}
+	for _, tc := range cases {
+		got := batchItemIcon(tc.status)
+		if got != tc.want {
+			t.Fatalf("batchItemIcon(%q) = %q, want %q", tc.status, got, tc.want)
+		}
 	}
 }
 

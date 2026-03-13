@@ -670,6 +670,8 @@ type mockStore struct {
 	events             []state.Event
 	taskUpdates        int
 	workerUpdates      int
+	batches            map[string]*state.Batch
+	batchItems         map[string][]state.BatchItem
 }
 
 func newMockStore(now time.Time) *mockStore {
@@ -722,6 +724,8 @@ func newMockStore(now time.Time) *mockStore {
 		projectStatusByRef: make(map[string]string),
 		projectStatusByID:  make(map[int64]string),
 		events:             make([]state.Event, 0),
+		batches:            make(map[string]*state.Batch),
+		batchItems:         make(map[string][]state.BatchItem),
 	}
 }
 
@@ -800,6 +804,66 @@ func (m *mockStore) AppendEvent(ctx context.Context, event state.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *mockStore) CreateBatch(ctx context.Context, projectID int64, name string, directives []string) (string, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	batchID := fmt.Sprintf("batch-test-%d", len(m.batches)+1)
+	m.batches[batchID] = &state.Batch{
+		ID:         batchID,
+		ProjectID:  projectID,
+		Name:       name,
+		Status:     state.BatchStatusPending,
+		TotalItems: len(directives),
+	}
+	items := make([]state.BatchItem, len(directives))
+	for i, d := range directives {
+		items[i] = state.BatchItem{
+			ID:        int64(i + 1),
+			BatchID:   batchID,
+			Sequence:  i + 1,
+			Directive: d,
+			Status:    state.BatchItemStatusPending,
+		}
+	}
+	m.batchItems[batchID] = items
+	return batchID, nil
+}
+
+func (m *mockStore) GetBatch(ctx context.Context, batchID string) (*state.Batch, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.batches[batchID]
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	return b, nil
+}
+
+func (m *mockStore) GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items, ok := m.batchItems[batchID]
+	if !ok {
+		return nil, state.ErrNotFound
+	}
+	return items, nil
+}
+
+func (m *mockStore) UpdateBatchStatus(ctx context.Context, batchID, status string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.batches[batchID]
+	if !ok {
+		return state.ErrNotFound
+	}
+	b.Status = status
 	return nil
 }
 
@@ -1040,5 +1104,305 @@ func TestNotifyProgressNotStarted(t *testing.T) {
 	// bot.started is false by default
 	if err := bot.NotifyProgress(context.Background(), "flux", "", "stage", "detail"); err != nil {
 		t.Fatalf("expected nil error for not-started bot, got %v", err)
+	}
+}
+
+func TestParseBatchArgs(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      string
+		wantProj  string
+		wantCount int
+		wantFirst string
+	}{
+		{"pipe separated", "nhi-watch Add YAML parser for scoring rules | Add dry-run flag to the audit cmd", "nhi-watch", 2, "Add YAML parser for scoring rules"},
+		{"multiline", "nhi-watch\nAdd YAML parser for scoring rules\nAdd dry-run flag to the audit cmd", "nhi-watch", 2, "Add YAML parser for scoring rules"},
+		{"single directive", "nhi-watch Add YAML config parser for scoring rules", "nhi-watch", 1, "Add YAML config parser for scoring rules"},
+		{"empty", "", "", 0, ""},
+		{"project only", "nhi-watch", "nhi-watch", 0, ""},
+		{"mixed inline and multiline", "nhi-watch Add config parser\nAdd dry-run flag to audit command", "nhi-watch", 2, "Add config parser"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			proj, dirs := parseBatchArgs(tc.args)
+			if proj != tc.wantProj {
+				t.Fatalf("project = %q, want %q", proj, tc.wantProj)
+			}
+			if len(dirs) != tc.wantCount {
+				t.Fatalf("directives count = %d, want %d (got %v)", len(dirs), tc.wantCount, dirs)
+			}
+			if tc.wantCount > 0 && dirs[0] != tc.wantFirst {
+				t.Fatalf("first directive = %q, want %q", dirs[0], tc.wantFirst)
+			}
+		})
+	}
+}
+
+func TestCmdBatch_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	msg, err := bot.handleCommand(ctx, "batch",
+		"flux Add YAML config parser for the scoring rules system | Add a dry-run flag to the audit command")
+	if err != nil {
+		t.Fatalf("batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "BATCH CREATED") {
+		t.Fatalf("expected batch created message, got %q", msg)
+	}
+	if !strings.Contains(msg, "flux") {
+		t.Fatalf("expected project name in message, got %q", msg)
+	}
+	if !strings.Contains(msg, "Items:   2") {
+		t.Fatalf("expected 2 items, got %q", msg)
+	}
+	if !strings.Contains(msg, "/start_batch") {
+		t.Fatalf("expected start hint, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if len(store.batches) != 1 {
+		t.Fatalf("expected 1 batch in store, got %d", len(store.batches))
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdBatch_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch", "")
+	if err != nil {
+		t.Fatalf("batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdBatch_ProjectNotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch",
+		"noexiste Add YAML config parser for the scoring rules system | Add a dry-run flag to the audit command")
+	if err != nil {
+		t.Fatalf("batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected project not found message, got %q", msg)
+	}
+}
+
+func TestCmdBatch_ValidationFailure(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch",
+		"flux fix it | Add YAML config parser for the scoring rules system")
+	if err != nil {
+		t.Fatalf("batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "invalid") {
+		t.Fatalf("expected validation error, got %q", msg)
+	}
+}
+
+func TestCmdStartBatch_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	// Pre-create a batch
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+		"Add dry-run flag to the audit command",
+	})
+
+	msg, err := bot.handleCommand(ctx, "start_batch", batchID)
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Batch started") {
+		t.Fatalf("expected started message, got %q", msg)
+	}
+	if !strings.Contains(msg, "1/2") {
+		t.Fatalf("expected directive count, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if store.batches[batchID].Status != state.BatchStatusRunning {
+		t.Fatalf("expected batch status running, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdStartBatch_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "start_batch", "")
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdStartBatch_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "start_batch", "batch-nope")
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
+func TestCmdCancelBatch_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "cancel_batch", batchID)
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cancelled") {
+		t.Fatalf("expected cancelled message, got %q", msg)
+	}
+
+	store.mu.Lock()
+	if store.batches[batchID].Status != state.BatchStatusPaused {
+		t.Fatalf("expected batch status paused, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
+}
+
+func TestCmdCancelBatch_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "cancel_batch", "")
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdCancelBatch_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "cancel_batch", "batch-nope")
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
+func TestCmdCancelBatch_AlreadyCompleted(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusCompleted
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "cancel_batch", batchID)
+	if err != nil {
+		t.Fatalf("cancel_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "already completed") {
+		t.Fatalf("expected already completed message, got %q", msg)
+	}
+}
+
+func TestCmdBatchStatus_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+		"Add dry-run flag to the audit command",
+	})
+
+	msg, err := bot.handleCommand(ctx, "batch_status", batchID)
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "BATCH STATUS") {
+		t.Fatalf("expected batch status message, got %q", msg)
+	}
+	if !strings.Contains(msg, "flux") {
+		t.Fatalf("expected project ref in message, got %q", msg)
+	}
+	if !strings.Contains(msg, "◻ Add YAML config") {
+		t.Fatalf("expected item listing, got %q", msg)
+	}
+}
+
+func TestCmdBatchStatus_MissingArgs(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch_status", "")
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Usage") {
+		t.Fatalf("expected usage message, got %q", msg)
+	}
+}
+
+func TestCmdBatchStatus_NotFound(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "batch_status", "batch-nope")
+	if err != nil {
+		t.Fatalf("batch_status command failed: %v", err)
+	}
+	if !strings.Contains(msg, "not found") {
+		t.Fatalf("expected not found message, got %q", msg)
+	}
+}
+
+func TestHyphenatedCommandFallback(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	// Simulate Telegram not recognizing /cancel-batch as a command,
+	// so it arrives as free text.
+	msg, err := bot.handleFreeText(ctx, fmt.Sprintf("/cancel-batch %s", batchID))
+	if err != nil {
+		t.Fatalf("hyphenated command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cancelled") {
+		t.Fatalf("expected cancelled message via hyphen fallback, got %q", msg)
+	}
+}
+
+func TestCmdStartBatch_AlreadyRunning(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{"Add config parser for scoring rules here"})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusRunning
+	store.mu.Unlock()
+
+	msg, err := bot.handleCommand(ctx, "start_batch", batchID)
+	if err != nil {
+		t.Fatalf("start_batch command failed: %v", err)
+	}
+	if !strings.Contains(msg, "cannot start") {
+		t.Fatalf("expected cannot start message, got %q", msg)
 	}
 }

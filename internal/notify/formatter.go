@@ -340,16 +340,20 @@ func FormatPendingApprovalsMessage(approvals []*PendingApproval, now time.Time) 
 func FormatHelpMessage() string {
 	var box strings.Builder
 	box.WriteString("┌─ HIVEMIND COMMANDS ────────\n")
-	box.WriteString("│ /status      global overview\n")
-	box.WriteString("│ /project {n} project detail\n")
-	box.WriteString("│ /run {p} {d} submit new work\n")
-	box.WriteString("│ /approve {id} approve item\n")
-	box.WriteString("│ /reject {id}  reject + reason\n")
-	box.WriteString("│ /pause {p}   pause project\n")
-	box.WriteString("│ /resume {p}  resume project\n")
-	box.WriteString("│ /consult {q} query LLM\n")
-	box.WriteString("│ /pending     active approvals\n")
-	box.WriteString("│ /help        this message\n")
+	box.WriteString("│ /status           global overview\n")
+	box.WriteString("│ /project {n}      project detail\n")
+	box.WriteString("│ /run {p} {d}      submit new work\n")
+	box.WriteString("│ /batch {p} {d..}  create batch\n")
+	box.WriteString("│ /start_batch {id} start batch\n")
+	box.WriteString("│ /cancel_batch {id} cancel batch\n")
+	box.WriteString("│ /batch_status {id} batch progress\n")
+	box.WriteString("│ /approve {id}     approve item\n")
+	box.WriteString("│ /reject {id}      reject + reason\n")
+	box.WriteString("│ /pause {p}        pause project\n")
+	box.WriteString("│ /resume {p}       resume project\n")
+	box.WriteString("│ /consult {q}      query LLM\n")
+	box.WriteString("│ /pending          active approvals\n")
+	box.WriteString("│ /help             this message\n")
 	box.WriteString("└────────────────────────────")
 
 	return codeBlock(box.String())
@@ -405,6 +409,70 @@ func FormatPlanCompletedMessage(project string) string {
 	return codeBlock(fmt.Sprintf(
 		"┌─ COMPLETED ────────────────\n│ ✓ %s │ all tasks done\n└────────────────────────────",
 		project))
+}
+
+func FormatBatchCreatedMessage(projectRef, batchID string, directives []string) string {
+	var box strings.Builder
+	box.WriteString("┌─ BATCH CREATED ─────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Items:   %d\n", len(directives)))
+	box.WriteString("│ Status:  ready\n")
+	box.WriteString("├────────────────────────────\n")
+	for i, d := range directives {
+		box.WriteString(fmt.Sprintf("│ %d ◻ %s\n", i+1, d))
+	}
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + codeBlock(fmt.Sprintf("/start_batch %s", batchID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/cancel_batch %s", batchID))
+
+	return TruncateTelegramMessage(msg)
+}
+
+func batchItemIcon(status string) string {
+	switch status {
+	case state.BatchItemStatusCompleted:
+		return "✓"
+	case state.BatchItemStatusRunning:
+		return "▸"
+	case state.BatchItemStatusFailed:
+		return "✗"
+	case state.BatchItemStatusSkipped:
+		return "⊘"
+	default:
+		return "◻"
+	}
+}
+
+func FormatBatchStatusMessage(projectRef, batchID, status string, completed, total int, items []state.BatchItem) string {
+	statusLine := status
+	switch status {
+	case state.BatchStatusRunning:
+		statusLine = fmt.Sprintf("running (%d/%d)", completed, total)
+	case state.BatchStatusCompleted:
+		statusLine = fmt.Sprintf("completed (%d/%d)", completed, total)
+	case state.BatchStatusPaused:
+		statusLine = fmt.Sprintf("paused (%d/%d)", completed, total)
+	case state.BatchStatusFailed:
+		statusLine = fmt.Sprintf("failed (%d/%d)", completed, total)
+	}
+
+	var box strings.Builder
+	box.WriteString("┌─ BATCH STATUS ──────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project: %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Status:  %s\n", statusLine))
+	box.WriteString("├────────────────────────────\n")
+	for _, item := range items {
+		icon := batchItemIcon(item.Status)
+		box.WriteString(fmt.Sprintf("│ %d %s %s\n", item.Sequence, icon, item.Directive))
+		if item.Error != nil && *item.Error != "" {
+			box.WriteString(fmt.Sprintf("│     %s\n", *item.Error))
+		}
+	}
+	box.WriteString("└────────────────────────────")
+
+	return TruncateTelegramMessage(codeBlock(box.String()))
 }
 
 func FormatProgressMessage(project, stage, detail string) string {
