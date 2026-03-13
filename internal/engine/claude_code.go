@@ -461,6 +461,72 @@ func buildEvalPrompt(req EvalRequest) string {
 	return builder.String()
 }
 
+func buildMetaPlanPrompt(req MetaPlanRequest) string {
+	var builder strings.Builder
+	builder.WriteString("PROJECT: ")
+	builder.WriteString(req.ProjectName)
+	builder.WriteString("\n\nROADMAP:\n")
+	builder.WriteString(req.Roadmap)
+	builder.WriteString("\n\nAGENTS.MD:\n")
+	builder.WriteString(req.AgentsMD)
+	builder.WriteString("\n\nREPOSITORY STATE:\n")
+	builder.WriteString(req.ReconData)
+
+	if strings.TrimSpace(req.Feedback) != "" {
+		builder.WriteString("\n\nPREVIOUS FEEDBACK:\n")
+		builder.WriteString(req.Feedback)
+	}
+
+	return builder.String()
+}
+
+func parseMetaPlanResult(raw string) (*MetaPlanResult, error) {
+	parsed, err := parseResultJSON[MetaPlanResult](raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMetaPlanResult(&parsed); err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func validateMetaPlanResult(result *MetaPlanResult) error {
+	if result == nil {
+		return errors.New("meta plan result is nil")
+	}
+	if len(result.Phases) == 0 {
+		return errors.New("meta plan result has no phases")
+	}
+
+	seen := make(map[string]bool, len(result.Phases))
+	for i, phase := range result.Phases {
+		name := strings.TrimSpace(phase.Name)
+		if name == "" {
+			return fmt.Errorf("phase[%d] missing name", i)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate phase name %q", name)
+		}
+		seen[name] = true
+
+		if len(phase.Directives) == 0 {
+			return fmt.Errorf("phase %q has no directives", name)
+		}
+
+		for _, dep := range phase.DependsOn {
+			if dep == name {
+				return fmt.Errorf("phase %q has self-dependency", name)
+			}
+			if !seen[dep] {
+				return fmt.Errorf("phase %q depends on %q which is not defined or comes later", name, dep)
+			}
+		}
+	}
+
+	return nil
+}
+
 func formatThinkTurns(turns []ThinkTurn) string {
 	var builder strings.Builder
 	for _, turn := range turns {
