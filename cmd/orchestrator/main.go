@@ -269,6 +269,7 @@ func main() {
 	evaluatorService := evaluator.New(glmClient, consultants, launcherService, store, logger)
 	plannerService.SetEngine(engineMgr)
 	plannerService.SetRecon(reconRunner)
+	plannerService.SetMetaPlannerResolver(engineMgr)
 	evaluatorService.SetEngine(engineMgr)
 	evaluatorService.SetRecon(reconRunner)
 	plannerService.SetEvaluator(plannerEvaluatorBridge{
@@ -299,6 +300,7 @@ func main() {
 		telegramNotifier = notify.NewTelegramBot(telegramToken, telegramChatID, plannerService, store, logger)
 		telegramNotifier.SetWorkerController(launcherService)
 		telegramNotifier.SetConsultants(consultants)
+		telegramNotifier.SetRoadmapPlanner(plannerService)
 		if startErr := telegramNotifier.Start(ctx); startErr != nil {
 			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
 			telegramNotifier = nil
