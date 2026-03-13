@@ -1167,6 +1167,72 @@ func (s *Store) CreateBatch(ctx context.Context, projectID int64, name string, d
 	return batchID, nil
 }
 
+// CreateBatchWithPhases creates a batch with items that include phase and
+// phase_depends_on fields, used by the /roadmap command. All slices must
+// have the same length. Empty phase strings are stored as NULL.
+func (s *Store) CreateBatchWithPhases(
+	ctx context.Context,
+	projectID int64,
+	name string,
+	directives, phases, phaseDependsOn []string,
+) (string, error) {
+	if s == nil || s.db == nil {
+		return "", fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+	if projectID <= 0 {
+		return "", fmt.Errorf("project_id is required: %w", ErrInvalidInput)
+	}
+	if len(directives) == 0 {
+		return "", fmt.Errorf("at least one directive is required: %w", ErrInvalidInput)
+	}
+	if len(directives) != len(phases) || len(directives) != len(phaseDependsOn) {
+		return "", fmt.Errorf("directives, phases, and phaseDependsOn must have the same length: %w", ErrInvalidInput)
+	}
+
+	batchID := generateBatchID()
+	now := formatTime(nowUTC())
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO batches (id, project_id, name, status, total_items, completed_items, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+		batchID, projectID, name, BatchStatusPending, len(directives), now, now,
+	)
+	if err != nil {
+		return "", fmt.Errorf("insert batch: %w", err)
+	}
+
+	for i, directive := range directives {
+		var phaseVal, depVal any
+		if strings.TrimSpace(phases[i]) != "" {
+			phaseVal = phases[i]
+		}
+		if strings.TrimSpace(phaseDependsOn[i]) != "" {
+			depVal = phaseDependsOn[i]
+		}
+
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO batch_items (batch_id, sequence, directive, status, phase, phase_depends_on)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			batchID, i+1, directive, BatchItemStatusPending, phaseVal, depVal,
+		)
+		if err != nil {
+			return "", fmt.Errorf("insert batch item %d: %w", i+1, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit batch: %w", err)
+	}
+
+	return batchID, nil
+}
+
 func (s *Store) GetBatch(ctx context.Context, batchID string) (*Batch, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)

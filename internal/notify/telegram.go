@@ -102,6 +102,7 @@ type stateStore interface {
 	UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error
 	GetRunningBatches(ctx context.Context) ([]state.Batch, error)
 	GetPausedBatches(ctx context.Context) ([]state.Batch, error)
+	CreateBatchWithPhases(ctx context.Context, projectID int64, name string, directives, phases, phaseDependsOn []string) (string, error)
 }
 
 type TelegramBot struct {
