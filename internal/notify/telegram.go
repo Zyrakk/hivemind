@@ -1194,7 +1194,55 @@ func (t *TelegramBot) cmdRoadmap(ctx context.Context, args string) (string, erro
 }
 
 func (t *TelegramBot) cmdApproveRoadmap(ctx context.Context, args string) (string, error) {
-	return formatEscapedLines("✗ Not yet implemented"), nil
+	roadmapID := strings.TrimSpace(args)
+	if roadmapID == "" {
+		return formatEscapedLines("Usage: /approve_roadmap {id}"), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	t.pendingRoadmapsMu.RLock()
+	result, ok := t.pendingRoadmaps[roadmapID]
+	t.pendingRoadmapsMu.RUnlock()
+
+	if !ok {
+		return formatEscapedLines(fmt.Sprintf("✗ Roadmap '%s' not found.", roadmapID)), nil
+	}
+
+	// Flatten phases, dropping invalid directives.
+	directives, phaseNames, phaseDeps, dropped := planner.FlattenValidatedPhases(result.Phases)
+
+	if len(directives) == 0 {
+		return formatEscapedLines("✗ No valid directives to execute. All were flagged by L1 validation."), nil
+	}
+
+	projectID, err := t.store.ResolveProjectID(ctx, result.ProjectRef)
+	if err != nil {
+		return "", err
+	}
+
+	batchID, err := t.store.CreateBatchWithPhases(ctx, projectID, "roadmap", directives, phaseNames, phaseDeps)
+	if err != nil {
+		return "", err
+	}
+
+	// Clean up pending state.
+	t.pendingRoadmapsMu.Lock()
+	delete(t.pendingRoadmaps, roadmapID)
+	t.pendingRoadmapsMu.Unlock()
+	t.approvalsMu.Lock()
+	delete(t.pendingApprovals, roadmapID)
+	t.approvalsMu.Unlock()
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("✓ Roadmap approved. Batch created with %d directives", len(directives)))
+	if dropped > 0 {
+		sb.WriteString(fmt.Sprintf(" (%d flagged directives dropped)", dropped))
+	}
+	sb.WriteString(fmt.Sprintf(".\n\n/start_batch %s", batchID))
+
+	return formatEscapedLines(sb.String()), nil
 }
 
 func (t *TelegramBot) cmdRejectRoadmap(ctx context.Context, args string) (string, error) {
