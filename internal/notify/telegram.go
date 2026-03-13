@@ -803,6 +803,37 @@ func parseBatchArgs(args string) (projectRef string, directives []string) {
 	return projectRef, directives
 }
 
+// parseRoadmapArgs extracts project and roadmap text from the args string.
+// Format: /roadmap {project} {roadmap text...} (possibly multiline)
+func parseRoadmapArgs(args string) (projectRef, roadmap string) {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return "", ""
+	}
+
+	lines := strings.Split(args, "\n")
+	firstLine := strings.TrimSpace(lines[0])
+	if firstLine == "" {
+		return "", ""
+	}
+
+	parts := strings.SplitN(firstLine, " ", 2)
+	projectRef = strings.TrimSpace(parts[0])
+
+	var roadmapParts []string
+	if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+		roadmapParts = append(roadmapParts, strings.TrimSpace(parts[1]))
+	}
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			roadmapParts = append(roadmapParts, line)
+		}
+	}
+
+	return projectRef, strings.Join(roadmapParts, "\n")
+}
+
 func (t *TelegramBot) cmdBatch(ctx context.Context, args string) (string, error) {
 	projectRef, directives := parseBatchArgs(args)
 	if projectRef == "" || len(directives) == 0 {
@@ -1113,6 +1144,63 @@ func (t *TelegramBot) cmdResumeBatch(ctx context.Context, args string) (string, 
 	return formatEscapedLines(fmt.Sprintf("▸ Resuming batch %s...", batchID)), nil
 }
 
+func (t *TelegramBot) cmdRoadmap(ctx context.Context, args string) (string, error) {
+	projectRef, roadmapText := parseRoadmapArgs(args)
+	if projectRef == "" || roadmapText == "" {
+		return formatEscapedLines(
+			"Usage: /roadmap {project} {roadmap text}",
+			"Example: /roadmap flux Build a REST API with auth and metrics",
+		), nil
+	}
+	if t.roadmapPlanner == nil {
+		return formatEscapedLines("✗ Meta-planner is not configured. Requires claude-code engine."), nil
+	}
+	if t.store == nil {
+		return "", fmt.Errorf("state store is not configured")
+	}
+
+	if _, err := t.store.ResolveProjectID(ctx, projectRef); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return formatEscapedLines(fmt.Sprintf("✗ Project '%s' not found.", projectRef)), nil
+		}
+		return "", err
+	}
+
+	t.setLastProjectRef(projectRef)
+
+	// Send initial progress message.
+	_ = t.enqueueMessage(ctx, formatEscapedLines(fmt.Sprintf("▸ Analyzing roadmap for %s...", projectRef)))
+
+	result, err := t.roadmapPlanner.MetaPlan(ctx, projectRef, roadmapText, "", "")
+	if err != nil {
+		return formatEscapedLines(fmt.Sprintf("✗ Roadmap analysis failed: %s", err.Error())), nil
+	}
+
+	// Store for approve/reject.
+	t.pendingRoadmapsMu.Lock()
+	t.pendingRoadmaps[result.ID] = result
+	t.pendingRoadmapsMu.Unlock()
+
+	// Register as pending approval so /pending shows it.
+	t.RegisterPendingApproval(PendingApproval{
+		ID:          result.ID,
+		Type:        "roadmap",
+		ProjectID:   projectRef,
+		Description: roadmapText,
+		AcceptsText: false,
+	})
+
+	return FormatRoadmapMessage(projectRef, result.ID, result.Phases, result.TotalDirectives, result.ValidDirectives), nil
+}
+
+func (t *TelegramBot) cmdApproveRoadmap(ctx context.Context, args string) (string, error) {
+	return formatEscapedLines("✗ Not yet implemented"), nil
+}
+
+func (t *TelegramBot) cmdRejectRoadmap(ctx context.Context, args string) (string, error) {
+	return formatEscapedLines("✗ Not yet implemented"), nil
+}
+
 func (t *TelegramBot) startBatchExecution(batchID, projectRef string) {
 	go func() {
 		if t.plannerExec == nil {
@@ -1251,6 +1339,12 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdRetry(ctx, args)
 	case "skip":
 		return t.cmdSkip(ctx, args)
+	case "roadmap":
+		return t.cmdRoadmap(ctx, args)
+	case "approve_roadmap":
+		return t.cmdApproveRoadmap(ctx, args)
+	case "reject_roadmap":
+		return t.cmdRejectRoadmap(ctx, args)
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":
