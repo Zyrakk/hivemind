@@ -60,6 +60,12 @@ type plannerExecutor interface {
 	ExecuteBatch(ctx context.Context, batchID string) error
 }
 
+// quotaTracker allows the TelegramBot to register a callback that fires
+// when the usage tracker transitions from quota-blocked to unblocked.
+type quotaTracker interface {
+	OnResumeFromQuota(cb func())
+}
+
 type plannerCreator interface {
 	CreatePlan(ctx context.Context, directive, projectID string) (*planner.PlanResult, error)
 }
@@ -95,6 +101,7 @@ type stateStore interface {
 	UpdateBatchStatus(ctx context.Context, batchID, status string) error
 	UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error
 	GetRunningBatches(ctx context.Context) ([]state.Batch, error)
+	GetPausedBatches(ctx context.Context) ([]state.Batch, error)
 }
 
 type TelegramBot struct {
@@ -186,6 +193,43 @@ func (t *TelegramBot) SetConsultants(consultants []llm.ConsultantClient) {
 
 func (t *TelegramBot) SetInputResolver(resolver func(ctx context.Context, approval *PendingApproval, response string) error) {
 	t.inputResolver = resolver
+}
+
+// SetUsageTracker registers a callback with the given quota tracker so that
+// paused batches are automatically resumed when quota becomes available.
+func (t *TelegramBot) SetUsageTracker(tracker quotaTracker) {
+	if t == nil || tracker == nil {
+		return
+	}
+	tracker.OnResumeFromQuota(func() {
+		t.resumeQuotaPausedBatches()
+	})
+}
+
+func (t *TelegramBot) resumeQuotaPausedBatches() {
+	if t.store == nil {
+		return
+	}
+	ctx := context.Background()
+	batches, err := t.store.GetPausedBatches(ctx)
+	if err != nil {
+		t.logger.Warn("failed to get paused batches for quota resume", "error", err)
+		return
+	}
+	for _, batch := range batches {
+		projectRef := fmt.Sprintf("%d", batch.ProjectID)
+		if detail, detailErr := t.store.GetProjectDetail(ctx, projectRef); detailErr == nil && detail.ProjectRef != "" {
+			projectRef = detail.ProjectRef
+		}
+		if err := t.store.UpdateBatchStatus(ctx, batch.ID, state.BatchStatusRunning); err != nil {
+			t.logger.Warn("failed to resume batch", "batchID", batch.ID, "error", err)
+			continue
+		}
+		t.startBatchExecution(batch.ID, projectRef)
+		_ = t.enqueueMessage(ctx, formatEscapedLines(
+			fmt.Sprintf("▸ Quota restored — auto-resuming batch %s", batch.ID),
+		))
+	}
 }
 
 func (t *TelegramBot) Start(ctx context.Context) error {

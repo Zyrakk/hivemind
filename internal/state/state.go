@@ -1510,6 +1510,56 @@ func (s *Store) GetRunningBatches(ctx context.Context) ([]Batch, error) {
 	return batches, nil
 }
 
+func (s *Store) GetPausedBatches(ctx context.Context) ([]Batch, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("state store is not initialized: %w", ErrInvalidInput)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, name, status, total_items, completed_items, recovery_note, created_at, updated_at
+		 FROM batches WHERE status = ?
+		 ORDER BY created_at ASC`, BatchStatusPaused,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query paused batches: %w", err)
+	}
+	defer rows.Close()
+
+	batches := make([]Batch, 0)
+	for rows.Next() {
+		var (
+			batch        Batch
+			recoveryNote sql.NullString
+			createdRaw   any
+			updatedRaw   any
+		)
+		if scanErr := rows.Scan(&batch.ID, &batch.ProjectID, &batch.Name, &batch.Status,
+			&batch.TotalItems, &batch.CompletedItems, &recoveryNote,
+			&createdRaw, &updatedRaw); scanErr != nil {
+			return nil, fmt.Errorf("scan batch: %w", scanErr)
+		}
+		if recoveryNote.Valid {
+			batch.RecoveryNote = &recoveryNote.String
+		}
+		createdAt, parseErr := parseTimeValue(createdRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		updatedAt, parseErr := parseTimeValue(updatedRaw)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		batch.CreatedAt = createdAt
+		batch.UpdatedAt = updatedAt
+		batches = append(batches, batch)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate paused batches: %w", err)
+	}
+
+	return batches, nil
+}
+
 // RecoverFromRestart detects zombie states left by a process crash and
 // transitions them to safe states. Returns the count of recovered items.
 func (s *Store) RecoverFromRestart(ctx context.Context) (int, error) {

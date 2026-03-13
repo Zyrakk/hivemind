@@ -906,6 +906,19 @@ func (m *mockStore) GetRunningBatches(ctx context.Context) ([]state.Batch, error
 	return result, nil
 }
 
+func (m *mockStore) GetPausedBatches(ctx context.Context) ([]state.Batch, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []state.Batch
+	for _, b := range m.batches {
+		if b.Status == state.BatchStatusPaused {
+			result = append(result, *b)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockStore) countEventsByType(eventType string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1612,4 +1625,26 @@ func TestCmdResumeBatch_MissingArgs(t *testing.T) {
 	if !strings.Contains(msg, "Usage") {
 		t.Fatalf("expected usage, got %q", msg)
 	}
+}
+
+func TestResumeQuotaPausedBatches(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+	})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusPaused
+	store.mu.Unlock()
+
+	bot.resumeQuotaPausedBatches()
+
+	// Verify batch was set to running.
+	store.mu.Lock()
+	if store.batches[batchID].Status != state.BatchStatusRunning {
+		t.Fatalf("expected running, got %q", store.batches[batchID].Status)
+	}
+	store.mu.Unlock()
 }

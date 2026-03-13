@@ -311,6 +311,9 @@ func main() {
 					telegramNotifier.QueueMessage(msg)
 				})
 			}
+			if ccEngine != nil && ccEngine.UsageTracker() != nil {
+				telegramNotifier.SetUsageTracker(ccEngine.UsageTracker())
+			}
 			plannerService.SetNotifier(telegramNotifier)
 			evaluatorService.SetNotifier(telegramNotifier)
 			launcherService.SetNotifier(telegramNotifier)
