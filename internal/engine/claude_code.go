@@ -172,6 +172,10 @@ func (e *ClaudeCodeEngine) UsageTracker() *UsageTracker {
 	return e.usageTracker
 }
 
+func (e *ClaudeCodeEngine) MetaPlan(ctx context.Context, req MetaPlanRequest) (*MetaPlanResult, error) {
+	return nil, errors.New("MetaPlan not yet implemented")
+}
+
 func (e *ClaudeCodeEngine) Available(context.Context) bool {
 	if e == nil {
 		return false

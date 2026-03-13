@@ -140,3 +140,28 @@ type EvalResult struct {
 	RetryPrompt string   `json:"retry_prompt"` // if verdict=retry
 	Confidence  float64  `json:"confidence"`
 }
+
+// MetaPlanner is an optional interface for engines that can decompose
+// a high-level roadmap into phased directives. Call sites type-assert.
+type MetaPlanner interface {
+	MetaPlan(ctx context.Context, req MetaPlanRequest) (*MetaPlanResult, error)
+}
+
+type MetaPlanRequest struct {
+	ProjectName string `json:"project_name"`
+	AgentsMD    string `json:"agents_md"`
+	ReconData   string `json:"recon_data"`
+	Roadmap     string `json:"roadmap"`
+	Feedback    string `json:"feedback,omitempty"` // for reject-and-revise
+}
+
+type MetaPlanResult struct {
+	Phases []RoadmapPhase `json:"phases"`
+}
+
+type RoadmapPhase struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Directives  []string `json:"directives"`
+	DependsOn   []string `json:"depends_on"`
+}
