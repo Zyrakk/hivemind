@@ -610,6 +610,11 @@ func (m *mockPlanExecutor) ExecutePlan(ctx context.Context, planID string) error
 	return m.err
 }
 
+func (m *mockPlanExecutor) ExecuteBatch(ctx context.Context, batchID string) error {
+	_ = ctx
+	return nil
+}
+
 type mockPlanCreator struct {
 	result    *planner.PlanResult
 	err       error
@@ -865,6 +870,40 @@ func (m *mockStore) UpdateBatchStatus(ctx context.Context, batchID, status strin
 	}
 	b.Status = status
 	return nil
+}
+
+func (m *mockStore) UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for bID, items := range m.batchItems {
+		for i, item := range items {
+			if item.ID == itemID {
+				m.batchItems[bID][i].Status = status
+				if planID != "" {
+					m.batchItems[bID][i].PlanID = &planID
+				}
+				if errorMsg != "" {
+					m.batchItems[bID][i].Error = &errorMsg
+				}
+				return nil
+			}
+		}
+	}
+	return state.ErrNotFound
+}
+
+func (m *mockStore) GetRunningBatches(ctx context.Context) ([]state.Batch, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []state.Batch
+	for _, b := range m.batches {
+		if b.Status == state.BatchStatusRunning {
+			result = append(result, *b)
+		}
+	}
+	return result, nil
 }
 
 func (m *mockStore) countEventsByType(eventType string) int {

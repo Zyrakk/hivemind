@@ -57,6 +57,7 @@ type RunHandle struct {
 
 type plannerExecutor interface {
 	ExecutePlan(ctx context.Context, planID string) error
+	ExecuteBatch(ctx context.Context, batchID string) error
 }
 
 type plannerCreator interface {
@@ -92,6 +93,8 @@ type stateStore interface {
 	GetBatch(ctx context.Context, batchID string) (*state.Batch, error)
 	GetBatchItems(ctx context.Context, batchID string) ([]state.BatchItem, error)
 	UpdateBatchStatus(ctx context.Context, batchID, status string) error
+	UpdateBatchItemStatus(ctx context.Context, itemID int64, status, planID, errorMsg string) error
+	GetRunningBatches(ctx context.Context) ([]state.Batch, error)
 }
 
 type TelegramBot struct {
