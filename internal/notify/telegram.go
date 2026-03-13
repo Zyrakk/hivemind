@@ -2218,7 +2218,6 @@ func (t *TelegramBot) listApprovals() []*PendingApproval {
 
 func (t *TelegramBot) cleanupExpiredApprovals(now time.Time) int {
 	t.approvalsMu.Lock()
-	defer t.approvalsMu.Unlock()
 
 	removed := 0
 	for id, approval := range t.pendingApprovals {
@@ -2233,10 +2232,18 @@ func (t *TelegramBot) cleanupExpiredApprovals(now time.Time) int {
 		}
 	}
 
-	// Also clean up orphaned roadmaps whose approval has expired.
+	// Snapshot surviving approval IDs before releasing approvalsMu,
+	// so we can clean up orphaned roadmaps without holding both locks.
+	surviving := make(map[string]struct{}, len(t.pendingApprovals))
+	for id := range t.pendingApprovals {
+		surviving[id] = struct{}{}
+	}
+	t.approvalsMu.Unlock()
+
+	// Clean up orphaned roadmaps whose approval has expired.
 	t.pendingRoadmapsMu.Lock()
 	for id := range t.pendingRoadmaps {
-		if _, exists := t.pendingApprovals[id]; !exists {
+		if _, exists := surviving[id]; !exists {
 			delete(t.pendingRoadmaps, id)
 		}
 	}
