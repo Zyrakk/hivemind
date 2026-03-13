@@ -173,7 +173,21 @@ func (e *ClaudeCodeEngine) UsageTracker() *UsageTracker {
 }
 
 func (e *ClaudeCodeEngine) MetaPlan(ctx context.Context, req MetaPlanRequest) (*MetaPlanResult, error) {
-	return nil, errors.New("MetaPlan not yet implemented")
+	if e == nil {
+		return nil, errors.New("claude code engine is nil")
+	}
+
+	systemPrompt, err := e.loadPrompt("meta_planner_claude_code.txt")
+	if err != nil {
+		return nil, err
+	}
+
+	invoked, err := e.invoke(ctx, systemPrompt, buildMetaPlanPrompt(req), false)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseMetaPlanResult(invoked.Result)
 }
 
 func (e *ClaudeCodeEngine) Available(context.Context) bool {
