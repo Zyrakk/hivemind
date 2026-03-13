@@ -1616,6 +1616,29 @@ func TestCmdResumeBatch_NotPaused(t *testing.T) {
 	}
 }
 
+func TestHyphenatedResumeBatchFallback(t *testing.T) {
+	ctx := context.Background()
+	store := newMockStore(time.Now().UTC())
+	bot := newTestBot(store)
+
+	batchID, _ := store.CreateBatch(ctx, 1, "", []string{
+		"Add YAML config parser for scoring rules",
+	})
+	store.mu.Lock()
+	store.batches[batchID].Status = state.BatchStatusPaused
+	store.mu.Unlock()
+
+	// Simulate Telegram not recognizing /resume-batch as a command,
+	// so it arrives as free text.
+	msg, err := bot.handleFreeText(ctx, fmt.Sprintf("/resume-batch %s", batchID))
+	if err != nil {
+		t.Fatalf("hyphenated command failed: %v", err)
+	}
+	if !strings.Contains(msg, "Resuming") {
+		t.Fatalf("expected resume message via hyphen fallback, got %q", msg)
+	}
+}
+
 func TestCmdResumeBatch_MissingArgs(t *testing.T) {
 	bot := newTestBot(newMockStore(time.Now().UTC()))
 	msg, err := bot.handleCommand(context.Background(), "resume_batch", "")
