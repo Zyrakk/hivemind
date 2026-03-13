@@ -950,7 +950,7 @@ func (t *TelegramBot) handleBatchResult(batchID, projectRef string, err error) {
 		}
 		_ = t.enqueueMessage(ctx, FormatBatchCompletedMessage(projectRef, batchID, total))
 
-	case err == context.Canceled:
+	case errors.Is(err, context.Canceled):
 		// Silent — user already sent /cancel_batch.
 
 	default:
@@ -1000,6 +1000,11 @@ func (t *TelegramBot) handleBatchResult(batchID, projectRef string, err error) {
 			_ = t.enqueueMessage(ctx, formatEscapedLines(
 				fmt.Sprintf("⏸ Batch %s paused: phase %q has failed items %v.\n/skip %s or fix and /retry %s",
 					batchID, phaseErr.Phase, phaseErr.FailedItems, batchID, batchID),
+			))
+
+		default:
+			_ = t.enqueueMessage(ctx, formatEscapedLines(
+				fmt.Sprintf("✗ Batch %s failed: %v", batchID, err),
 			))
 		}
 	}
