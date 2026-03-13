@@ -40,7 +40,7 @@ func (e *ErrBatchItemFailed) Unwrap() error {
 // ErrBatchPhaseDependency is returned when a phase dependency has failed/skipped items.
 type ErrBatchPhaseDependency struct {
 	Phase       string
-	FailedItems []int
+	FailedItems []int64
 }
 
 func (e *ErrBatchPhaseDependency) Error() string {
