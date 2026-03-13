@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/state"
 )
 
@@ -454,5 +455,58 @@ func TestFormatPRReadyWithUserChecks(t *testing.T) {
 	}
 	if !strings.Contains(msg, "Verify UI") {
 		t.Fatalf("expected user check description in PR message:\n%s", msg)
+	}
+}
+
+func TestFormatRoadmapMessage(t *testing.T) {
+	t.Parallel()
+
+	phases := []planner.ValidatedPhase{
+		{
+			Name:        "data-layer",
+			Description: "Set up data models",
+			DependsOn:   nil,
+			Directives: []planner.ValidatedDirective{
+				{Text: "Add config parser module for settings", Valid: true},
+				{Text: "bad", Valid: false, Error: "too short"},
+			},
+		},
+		{
+			Name:        "api",
+			Description: "REST endpoints",
+			DependsOn:   []string{"data-layer"},
+			Directives: []planner.ValidatedDirective{
+				{Text: "Add REST endpoint handlers for users", Valid: true},
+			},
+		},
+	}
+
+	msg := FormatRoadmapMessage("nhi-watch", "roadmap-123", phases, 3, 2)
+
+	if !strings.Contains(msg, "ROADMAP") {
+		t.Fatal("expected ROADMAP header")
+	}
+	if !strings.Contains(msg, "nhi-watch") {
+		t.Fatal("expected project name")
+	}
+	if !strings.Contains(msg, "data-layer") {
+		t.Fatal("expected phase name")
+	}
+	if !strings.Contains(msg, "⚠") {
+		t.Fatal("expected warning marker for invalid directive")
+	}
+	if !strings.Contains(msg, "approve_roadmap") {
+		t.Fatal("expected /approve_roadmap command")
+	}
+	if !strings.Contains(msg, "reject_roadmap") {
+		t.Fatal("expected /reject_roadmap command")
+	}
+}
+
+func TestFormatHelpMessageContainsRoadmap(t *testing.T) {
+	t.Parallel()
+	msg := FormatHelpMessage()
+	if !strings.Contains(msg, "roadmap") {
+		t.Fatal("help message should mention /roadmap")
 	}
 }

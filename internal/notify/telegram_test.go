@@ -919,6 +919,32 @@ func (m *mockStore) GetPausedBatches(ctx context.Context) ([]state.Batch, error)
 	return result, nil
 }
 
+func (m *mockStore) CreateBatchWithPhases(ctx context.Context, projectID int64, name string, directives, phases, phaseDependsOn []string) (string, error) {
+	_ = ctx
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	batchID := fmt.Sprintf("batch-test-%d", len(m.batches)+1)
+	m.batches[batchID] = &state.Batch{
+		ID:         batchID,
+		ProjectID:  projectID,
+		Name:       name,
+		Status:     state.BatchStatusPending,
+		TotalItems: len(directives),
+	}
+	items := make([]state.BatchItem, len(directives))
+	for i, d := range directives {
+		items[i] = state.BatchItem{
+			ID:        int64(i + 1),
+			BatchID:   batchID,
+			Sequence:  i + 1,
+			Directive: d,
+			Status:    state.BatchItemStatusPending,
+		}
+	}
+	m.batchItems[batchID] = items
+	return batchID, nil
+}
+
 func (m *mockStore) countEventsByType(eventType string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

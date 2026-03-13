@@ -350,6 +350,9 @@ func FormatHelpMessage() string {
 	box.WriteString("│ /retry {id}       retry failed item\n")
 	box.WriteString("│ /skip {id}        skip failed item\n")
 	box.WriteString("│ /resume_batch {id} resume paused batch\n")
+	box.WriteString("│ /roadmap {p} {text} decompose roadmap\n")
+	box.WriteString("│ /approve_roadmap {id} approve roadmap\n")
+	box.WriteString("│ /reject_roadmap {id} reject + feedback\n")
 	box.WriteString("│ /approve {id}     approve item\n")
 	box.WriteString("│ /reject {id}      reject + reason\n")
 	box.WriteString("│ /pause {p}        pause project\n")
@@ -429,6 +432,42 @@ func FormatBatchCreatedMessage(projectRef, batchID string, directives []string) 
 	msg := codeBlock(box.String())
 	msg += "\n" + codeBlock(fmt.Sprintf("/start_batch %s", batchID))
 	msg += "\n" + codeBlock(fmt.Sprintf("/cancel_batch %s", batchID))
+
+	return TruncateTelegramMessage(msg)
+}
+
+func FormatRoadmapMessage(projectRef, roadmapID string, phases []planner.ValidatedPhase, totalDirectives, validDirectives int) string {
+	var box strings.Builder
+	box.WriteString("┌─ ROADMAP ───────────────────\n")
+	box.WriteString(fmt.Sprintf("│ Project:    %s\n", projectRef))
+	box.WriteString(fmt.Sprintf("│ Directives: %d valid / %d total\n", validDirectives, totalDirectives))
+	if validDirectives < totalDirectives {
+		box.WriteString(fmt.Sprintf("│ ⚠ %d directives flagged\n", totalDirectives-validDirectives))
+	}
+
+	for _, phase := range phases {
+		box.WriteString("├────────────────────────────\n")
+		depStr := ""
+		if len(phase.DependsOn) > 0 {
+			depStr = fmt.Sprintf(" → %s", strings.Join(phase.DependsOn, ", "))
+		}
+		box.WriteString(fmt.Sprintf("│ ▸ %s%s\n", phase.Name, depStr))
+		if strings.TrimSpace(phase.Description) != "" {
+			box.WriteString(fmt.Sprintf("│   %s\n", phase.Description))
+		}
+		for _, d := range phase.Directives {
+			marker := "◻"
+			if !d.Valid {
+				marker = "⚠"
+			}
+			box.WriteString(fmt.Sprintf("│   %s %s\n", marker, d.Text))
+		}
+	}
+	box.WriteString("└────────────────────────────")
+
+	msg := codeBlock(box.String())
+	msg += "\n" + codeBlock(fmt.Sprintf("/approve_roadmap %s", roadmapID))
+	msg += "\n" + codeBlock(fmt.Sprintf("/reject_roadmap %s {feedback}", roadmapID))
 
 	return TruncateTelegramMessage(msg)
 }
