@@ -1,6 +1,8 @@
 package planner
 
 import (
+	"strings"
+
 	"github.com/zyrakk/hivemind/internal/engine"
 )
 
@@ -51,4 +53,29 @@ func ValidateMetaPlanDirectives(result *engine.MetaPlanResult) []ValidatedPhase 
 	}
 
 	return phases
+}
+
+// FlattenValidatedPhases converts validated phases into flat slices suitable
+// for CreateBatchWithPhases. Invalid directives are dropped. Returns the
+// count of dropped directives. Each phase's depends_on is joined with commas
+// for multi-dependency phases.
+func FlattenValidatedPhases(phases []ValidatedPhase) (directives, phaseNames, phaseDeps []string, dropped int) {
+	for _, phase := range phases {
+		dep := ""
+		if len(phase.DependsOn) > 0 {
+			dep = strings.Join(phase.DependsOn, ",")
+		}
+
+		for _, d := range phase.Directives {
+			if !d.Valid {
+				dropped++
+				continue
+			}
+			directives = append(directives, d.Text)
+			phaseNames = append(phaseNames, phase.Name)
+			phaseDeps = append(phaseDeps, dep)
+		}
+	}
+
+	return directives, phaseNames, phaseDeps, dropped
 }
