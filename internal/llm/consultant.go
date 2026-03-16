@@ -80,6 +80,11 @@ func loadConsultantPrompt(promptDir string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// promptFallbackDirs are checked as a last resort when the relative-path
+// walk from the working directory fails.  This covers container layouts
+// where WORKDIR (/data) differs from the prompt install path (/app/prompts).
+var promptFallbackDirs = []string{"/app/prompts"}
+
 func ResolvePromptPath(promptDir, filename string) (string, error) {
 	if strings.TrimSpace(promptDir) == "" {
 		promptDir = "prompts"
@@ -89,6 +94,12 @@ func ResolvePromptPath(promptDir, filename string) (string, error) {
 		candidate := filepath.Join(promptDir, filename)
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
+		}
+		for _, fallback := range promptFallbackDirs {
+			candidate := filepath.Join(fallback, filename)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
+			}
 		}
 		return "", fmt.Errorf("prompt %q not found in %s", filename, promptDir)
 	}
@@ -110,6 +121,13 @@ func ResolvePromptPath(promptDir, filename string) (string, error) {
 			break
 		}
 		searchDir = parent
+	}
+
+	for _, fallback := range promptFallbackDirs {
+		candidate := filepath.Join(fallback, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
 	}
 
 	return "", fmt.Errorf("prompt %q not found (searched from %s)", filename, workingDir)
