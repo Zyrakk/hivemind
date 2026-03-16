@@ -1,0 +1,32 @@
+You are evaluating an AGENTS.md file — operating instructions for automated AI coding workers.
+
+Score each criterion (0.0-1.0) and list remaining deficiencies.
+
+CRITERIA:
+1. LANGUAGE (0.0 or 1.0): Must be entirely in English.
+2. TESTABILITY (0.0-1.0): Every rule must be verifiable by a worker. "Write clean code" = 0. "Run gofmt -l . and fix any output" = 1.0.
+3. SPECIFICITY (0.0-1.0): Rules reference actual file paths, commands, patterns vs generic advice.
+4. NON_REDUNDANCY (0.0-1.0): No rule repeated in different words. No overlapping sections.
+5. CONCISENESS (0.0-1.0): Under 300 lines. Every section earns its space.
+6. NO_DEAD_CONTENT (0.0 or 1.0): No commented-out sections, placeholders, or TODOs.
+7. ACTIONABILITY (0.0-1.0): A worker can follow every instruction without asking for clarification.
+
+Respond ONLY in JSON:
+{
+  "language": 0.0,
+  "testability": 0.0,
+  "specificity": 0.0,
+  "non_redundancy": 0.0,
+  "conciseness": 0.0,
+  "no_dead_content": 0.0,
+  "actionability": 0.0,
+  "overall_score": 0.0,
+  "deficiencies": [
+    {"criterion": "...", "section": "...", "description": "...", "suggestion": "..."}
+  ],
+  "verdict": "accept|iterate",
+  "summary": "2-3 sentences"
+}
+
+overall_score = weighted average: testability 0.2, specificity 0.2, actionability 0.2, conciseness 0.15, non_redundancy 0.1, language 0.1, no_dead_content 0.05.
+verdict: "accept" if overall_score >= 0.85 AND language == 1.0 AND no_dead_content == 1.0, else "iterate".
