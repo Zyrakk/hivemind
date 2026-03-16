@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -752,6 +753,14 @@ func (t *TelegramBot) handleUpdate(ctx context.Context, update tgbotapi.Update) 
 			slog.String("username", username),
 		)
 		return
+	}
+
+	if msg.Document != nil {
+		caption := strings.TrimSpace(msg.Caption)
+		if strings.HasPrefix(strings.ToLower(caption), "/refine") {
+			go t.handleRefineUpload(context.Background(), msg)
+			return
+		}
 	}
 
 	if msg.IsCommand() {
@@ -2474,6 +2483,110 @@ func normalizeApprovalID(approvalID string) string {
 	}
 
 	return fmt.Sprintf("a-%d", time.Now().UnixNano())
+}
+
+func (t *TelegramBot) loadPromptFile(filename string) (string, error) {
+	promptDir := t.promptDir
+	if strings.TrimSpace(promptDir) == "" {
+		promptDir = "prompts"
+	}
+	path, err := resolveRefinerPromptPath(promptDir, filename)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read prompt %q: %w", filename, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Message) {
+	if t.refiner == nil {
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Refiner not configured."))
+		return
+	}
+
+	doc := msg.Document
+	filename := strings.ToLower(doc.FileName)
+	mime := strings.ToLower(doc.MimeType)
+	if !strings.HasSuffix(filename, ".md") && !strings.HasSuffix(filename, ".txt") && !strings.HasPrefix(mime, "text/") {
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Only .md or .txt files are supported for /refine."))
+		return
+	}
+
+	// Download file
+	fileConfig := tgbotapi.FileConfig{FileID: doc.FileID}
+	file, err := t.bot.GetFile(fileConfig)
+	if err != nil {
+		t.logger.Error("refine: failed to get file info", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to retrieve file from Telegram."))
+		return
+	}
+
+	fileURL := file.Link(t.bot.Token)
+	dlClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := dlClient.Get(fileURL)
+	if err != nil {
+		t.logger.Error("refine: failed to download file", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to download file from Telegram."))
+		return
+	}
+	defer resp.Body.Close()
+
+	content, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
+	if err != nil {
+		t.logger.Error("refine: failed to read file content", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to read file content."))
+		return
+	}
+
+	documentContent := strings.TrimSpace(string(content))
+	if documentContent == "" {
+		_ = t.enqueueMessage(ctx, formatEscapedLines("File is empty."))
+		return
+	}
+
+	lineCount := strings.Count(documentContent, "\n") + 1
+	_ = t.enqueueMessage(ctx, formatEscapedLines(
+		fmt.Sprintf(">> Refining document (%d chars, ~%d lines). This may take a few minutes.", len(documentContent), lineCount),
+	))
+
+	// Load prompts
+	improvementPrompt, err := t.loadPromptFile("refiner_improve.txt")
+	if err != nil {
+		t.logger.Error("refine: failed to load improvement prompt", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to load improvement prompt: "+err.Error()))
+		return
+	}
+
+	rubric, err := t.loadPromptFile("refiner_rubric_agents_md.txt")
+	if err != nil {
+		t.logger.Error("refine: failed to load rubric prompt", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to load rubric prompt: "+err.Error()))
+		return
+	}
+
+	// Run refinement
+	result, err := t.refiner.Run(ctx, documentContent, rubric, improvementPrompt)
+	if err != nil {
+		t.logger.Error("refine: refinement failed", "error", err)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Refinement failed: "+err.Error()))
+		return
+	}
+
+	// Send result as document
+	outDoc := tgbotapi.NewDocument(msg.Chat.ID, tgbotapi.FileBytes{
+		Name:  "AGENTS_refined.md",
+		Bytes: []byte(result.FinalDocument),
+	})
+	outDoc.Caption = fmt.Sprintf("Refinement complete. %d iterations, score: %.2f, converged: %v",
+		result.Iterations, result.FinalScore, result.Converged)
+
+	if _, sendErr := t.bot.Send(outDoc); sendErr != nil {
+		t.logger.Error("refine: failed to send result document", "error", sendErr)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to send refined document: "+sendErr.Error()))
+	}
 }
 
 func resolveRefinerPromptPath(promptDir, filename string) (string, error) {
