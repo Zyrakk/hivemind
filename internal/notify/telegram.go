@@ -19,6 +19,7 @@ import (
 	"github.com/zyrakk/hivemind/internal/launcher"
 	"github.com/zyrakk/hivemind/internal/llm"
 	"github.com/zyrakk/hivemind/internal/planner"
+	"github.com/zyrakk/hivemind/internal/refiner"
 	"github.com/zyrakk/hivemind/internal/state"
 )
 
@@ -84,6 +85,10 @@ type roadmapPlanner interface {
 	MetaPlan(ctx context.Context, projectRef, roadmap, feedback, cachedReconData string) (*planner.RoadmapResult, error)
 }
 
+type refinerService interface {
+	Run(ctx context.Context, document, rubric, improvementPrompt string) (*refiner.RefinementResult, error)
+}
+
 type workerController interface {
 	GetActiveWorkers() []launcher.WorkerProcess
 	PauseWorker(sessionID string) error
@@ -126,6 +131,8 @@ type TelegramBot struct {
 	roadmapPlanner roadmapPlanner
 	workers        workerController
 	consultants    []llm.ConsultantClient
+	refiner        refinerService
+	promptDir      string
 
 	inputResolver func(ctx context.Context, approval *PendingApproval, response string) error
 	sendMessageFn func(text string) error
@@ -206,6 +213,20 @@ func (t *TelegramBot) SetRoadmapPlanner(rp roadmapPlanner) {
 		return
 	}
 	t.roadmapPlanner = rp
+}
+
+func (t *TelegramBot) SetRefiner(r refinerService) {
+	if t == nil {
+		return
+	}
+	t.refiner = r
+}
+
+func (t *TelegramBot) SetPromptDir(dir string) {
+	if t == nil {
+		return
+	}
+	t.promptDir = dir
 }
 
 func (t *TelegramBot) SetInputResolver(resolver func(ctx context.Context, approval *PendingApproval, response string) error) {
