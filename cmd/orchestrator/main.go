@@ -25,6 +25,7 @@ import (
 	"github.com/zyrakk/hivemind/internal/notify"
 	"github.com/zyrakk/hivemind/internal/planner"
 	"github.com/zyrakk/hivemind/internal/recon"
+	"github.com/zyrakk/hivemind/internal/refiner"
 	"github.com/zyrakk/hivemind/internal/state"
 	"gopkg.in/yaml.v3"
 )
@@ -301,6 +302,9 @@ func main() {
 		telegramNotifier.SetWorkerController(launcherService)
 		telegramNotifier.SetConsultants(consultants)
 		telegramNotifier.SetRoadmapPlanner(plannerService)
+		docRefiner := refiner.New(glmClient, glmClient, logger)
+		telegramNotifier.SetRefiner(docRefiner)
+		telegramNotifier.SetPromptDir("prompts")
 		if startErr := telegramNotifier.Start(ctx); startErr != nil {
 			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
 			telegramNotifier = nil
