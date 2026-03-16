@@ -1466,6 +1466,8 @@ func (t *TelegramBot) handleCommand(ctx context.Context, command, args string) (
 		return t.cmdApproveRoadmap(ctx, args)
 	case "reject_roadmap":
 		return t.cmdRejectRoadmap(ctx, args)
+	case "refine":
+		return formatEscapedLines("Send a .md file as a Telegram document with caption /refine to start refinement."), nil
 	case "pending":
 		return t.cmdPending(ctx), nil
 	case "help":

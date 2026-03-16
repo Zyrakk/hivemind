@@ -358,6 +358,7 @@ func FormatHelpMessage() string {
 	box.WriteString("│ /pause {p}        pause project\n")
 	box.WriteString("│ /resume {p}       resume project\n")
 	box.WriteString("│ /consult {q}      query LLM\n")
+	box.WriteString("│ /refine           refine a .md file\n")
 	box.WriteString("│ /pending          active approvals\n")
 	box.WriteString("│ /help             this message\n")
 	box.WriteString("└────────────────────────────")

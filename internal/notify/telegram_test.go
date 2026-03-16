@@ -1697,3 +1697,14 @@ func TestResumeQuotaPausedBatches(t *testing.T) {
 	}
 	store.mu.Unlock()
 }
+
+func TestCmdRefine_NoFile(t *testing.T) {
+	bot := newTestBot(newMockStore(time.Now().UTC()))
+	msg, err := bot.handleCommand(context.Background(), "refine", "")
+	if err != nil {
+		t.Fatalf("refine command failed: %v", err)
+	}
+	if !strings.Contains(msg, "/refine") {
+		t.Fatalf("expected usage instructions mentioning /refine, got %q", msg)
+	}
+}
