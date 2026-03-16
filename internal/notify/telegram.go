@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -2473,4 +2474,31 @@ func normalizeApprovalID(approvalID string) string {
 	}
 
 	return fmt.Sprintf("a-%d", time.Now().UnixNano())
+}
+
+func resolveRefinerPromptPath(promptDir, filename string) (string, error) {
+	if filepath.IsAbs(promptDir) {
+		candidate := filepath.Join(promptDir, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		return "", fmt.Errorf("prompt %q not found in %s", filename, promptDir)
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("get working directory: %w", err)
+	}
+	searchDir := workingDir
+	for {
+		candidate := filepath.Join(searchDir, promptDir, filename)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		parent := filepath.Dir(searchDir)
+		if parent == searchDir {
+			break
+		}
+		searchDir = parent
+	}
+	return "", fmt.Errorf("prompt %q not found (searched from %s)", filename, workingDir)
 }
