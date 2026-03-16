@@ -304,7 +304,6 @@ func main() {
 		telegramNotifier.SetRoadmapPlanner(plannerService)
 		docRefiner := refiner.New(glmClient, glmClient, logger)
 		telegramNotifier.SetRefiner(docRefiner)
-		telegramNotifier.SetPromptDir("prompts")
 		if startErr := telegramNotifier.Start(ctx); startErr != nil {
 			logger.Error("failed to start telegram notifier", slog.Any("error", startErr))
 			telegramNotifier = nil

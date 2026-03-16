@@ -9,10 +9,11 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/zyrakk/hivemind/internal/llm"
 )
 
 const (
@@ -270,7 +271,7 @@ func (e *ClaudeCodeEngine) loadPrompt(filename string) (string, error) {
 		return "", errors.New("claude code engine is nil")
 	}
 
-	promptPath, err := resolvePromptPath(e.promptDir, filename)
+	promptPath, err := llm.ResolvePromptPath(e.promptDir, filename)
 	if err != nil {
 		return "", err
 	}
@@ -281,41 +282,6 @@ func (e *ClaudeCodeEngine) loadPrompt(filename string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(data)), nil
-}
-
-func resolvePromptPath(promptDir, filename string) (string, error) {
-	if strings.TrimSpace(promptDir) == "" {
-		promptDir = defaultClaudeCodePromptDir
-	}
-
-	if filepath.IsAbs(promptDir) {
-		candidate := filepath.Join(promptDir, filename)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		return "", fmt.Errorf("prompt %q not found in %s", filename, promptDir)
-	}
-
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
-	}
-
-	searchDir := workingDir
-	for {
-		candidate := filepath.Join(searchDir, promptDir, filename)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-
-		parent := filepath.Dir(searchDir)
-		if parent == searchDir {
-			break
-		}
-		searchDir = parent
-	}
-
-	return "", fmt.Errorf("prompt %q not found (searched from %s)", filename, workingDir)
 }
 
 func parseInvokeOutput(output []byte) (*invokeResult, error) {

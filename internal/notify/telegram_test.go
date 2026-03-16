@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1708,28 +1706,5 @@ func TestCmdRefine_NoFile(t *testing.T) {
 	}
 	if !strings.Contains(msg, "/refine") {
 		t.Fatalf("expected usage instructions mentioning /refine, got %q", msg)
-	}
-}
-
-func TestResolveRefinerPromptPath_AbsoluteDir(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := resolveRefinerPromptPath(dir, "test.txt")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != filepath.Join(dir, "test.txt") {
-		t.Errorf("expected %q, got %q", filepath.Join(dir, "test.txt"), got)
-	}
-}
-
-func TestResolveRefinerPromptPath_AbsoluteDir_NotFound(t *testing.T) {
-	dir := t.TempDir()
-	_, err := resolveRefinerPromptPath(dir, "nonexistent.txt")
-	if err == nil {
-		t.Fatal("expected error for missing file")
 	}
 }

@@ -134,7 +134,7 @@ type TelegramBot struct {
 	workers        workerController
 	consultants    []llm.ConsultantClient
 	refiner        refinerService
-	promptDir      string
+	httpClient     *http.Client
 
 	inputResolver func(ctx context.Context, approval *PendingApproval, response string) error
 	sendMessageFn func(text string) error
@@ -185,6 +185,7 @@ func NewTelegramBot(
 		plannerRebuild:   svc,
 		store:            db,
 		plannerExec:      svc,
+		httpClient:       &http.Client{Timeout: 30 * time.Second},
 		nowFn:            time.Now,
 		approvalsTTL:     defaultApprovalsTTL,
 		prApprovalTTL:    defaultPRApprovalTTL,
@@ -222,13 +223,6 @@ func (t *TelegramBot) SetRefiner(r refinerService) {
 		return
 	}
 	t.refiner = r
-}
-
-func (t *TelegramBot) SetPromptDir(dir string) {
-	if t == nil {
-		return
-	}
-	t.promptDir = dir
 }
 
 func (t *TelegramBot) SetInputResolver(resolver func(ctx context.Context, approval *PendingApproval, response string) error) {
@@ -758,7 +752,11 @@ func (t *TelegramBot) handleUpdate(ctx context.Context, update tgbotapi.Update) 
 	if msg.Document != nil {
 		caption := strings.TrimSpace(msg.Caption)
 		if strings.HasPrefix(strings.ToLower(caption), "/refine") {
-			go t.handleRefineUpload(context.Background(), msg)
+			t.wg.Add(1)
+			go func() {
+				defer t.wg.Done()
+				t.handleRefineUpload(context.Background(), msg)
+			}()
 			return
 		}
 	}
@@ -2486,11 +2484,7 @@ func normalizeApprovalID(approvalID string) string {
 }
 
 func (t *TelegramBot) loadPromptFile(filename string) (string, error) {
-	promptDir := t.promptDir
-	if strings.TrimSpace(promptDir) == "" {
-		promptDir = "prompts"
-	}
-	path, err := resolveRefinerPromptPath(promptDir, filename)
+	path, err := llm.ResolvePromptPath("", filename)
 	if err != nil {
 		return "", err
 	}
@@ -2499,6 +2493,20 @@ func (t *TelegramBot) loadPromptFile(filename string) (string, error) {
 		return "", fmt.Errorf("read prompt %q: %w", filename, err)
 	}
 	return strings.TrimSpace(string(data)), nil
+}
+
+const (
+	refinerImprovePrompt = "refiner_improve.txt"
+	refinerRubricPrompt  = "refiner_rubric_agents_md.txt"
+)
+
+func refineOutputName(inputName string) string {
+	ext := filepath.Ext(inputName)
+	base := strings.TrimSuffix(inputName, ext)
+	if ext == "" {
+		ext = ".md"
+	}
+	return base + "_refined" + ext
 }
 
 func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Message) {
@@ -2525,14 +2533,19 @@ func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Mess
 	}
 
 	fileURL := file.Link(t.bot.Token)
-	dlClient := &http.Client{Timeout: 30 * time.Second}
-	resp, err := dlClient.Get(fileURL)
+	resp, err := t.httpClient.Get(fileURL)
 	if err != nil {
 		t.logger.Error("refine: failed to download file", "error", err)
 		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to download file from Telegram."))
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.logger.Error("refine: unexpected status downloading file", "status", resp.StatusCode)
+		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to download file from Telegram."))
+		return
+	}
 
 	content, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB limit
 	if err != nil {
@@ -2553,14 +2566,14 @@ func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Mess
 	))
 
 	// Load prompts
-	improvementPrompt, err := t.loadPromptFile("refiner_improve.txt")
+	improvementPrompt, err := t.loadPromptFile(refinerImprovePrompt)
 	if err != nil {
 		t.logger.Error("refine: failed to load improvement prompt", "error", err)
 		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to load improvement prompt: "+err.Error()))
 		return
 	}
 
-	rubric, err := t.loadPromptFile("refiner_rubric_agents_md.txt")
+	rubric, err := t.loadPromptFile(refinerRubricPrompt)
 	if err != nil {
 		t.logger.Error("refine: failed to load rubric prompt", "error", err)
 		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to load rubric prompt: "+err.Error()))
@@ -2577,7 +2590,7 @@ func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Mess
 
 	// Send result as document
 	outDoc := tgbotapi.NewDocument(msg.Chat.ID, tgbotapi.FileBytes{
-		Name:  "AGENTS_refined.md",
+		Name:  refineOutputName(doc.FileName),
 		Bytes: []byte(result.FinalDocument),
 	})
 	outDoc.Caption = fmt.Sprintf("Refinement complete. %d iterations, score: %.2f, converged: %v",
@@ -2587,31 +2600,4 @@ func (t *TelegramBot) handleRefineUpload(ctx context.Context, msg *tgbotapi.Mess
 		t.logger.Error("refine: failed to send result document", "error", sendErr)
 		_ = t.enqueueMessage(ctx, formatEscapedLines("Failed to send refined document: "+sendErr.Error()))
 	}
-}
-
-func resolveRefinerPromptPath(promptDir, filename string) (string, error) {
-	if filepath.IsAbs(promptDir) {
-		candidate := filepath.Join(promptDir, filename)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		return "", fmt.Errorf("prompt %q not found in %s", filename, promptDir)
-	}
-	workingDir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
-	}
-	searchDir := workingDir
-	for {
-		candidate := filepath.Join(searchDir, promptDir, filename)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-		parent := filepath.Dir(searchDir)
-		if parent == searchDir {
-			break
-		}
-		searchDir = parent
-	}
-	return "", fmt.Errorf("prompt %q not found (searched from %s)", filename, workingDir)
 }

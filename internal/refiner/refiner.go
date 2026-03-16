@@ -3,7 +3,6 @@ package refiner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -79,7 +78,7 @@ func extractDocument(raw string) string {
 }
 
 func parseRubricScore(content string) (*RubricScore, error) {
-	jsonPayload, err := extractJSONObject(content)
+	jsonPayload, err := llm.ExtractJSONObject(content)
 	if err != nil {
 		return nil, err
 	}
@@ -88,26 +87,6 @@ func parseRubricScore(content string) (*RubricScore, error) {
 		return nil, fmt.Errorf("decode rubric score: %w", err)
 	}
 	return &score, nil
-}
-
-func extractJSONObject(content string) ([]byte, error) {
-	trimmed := strings.TrimSpace(content)
-	if trimmed == "" {
-		return nil, errors.New("empty response")
-	}
-	if strings.HasPrefix(trimmed, "```") {
-		trimmed = strings.TrimPrefix(trimmed, "```json")
-		trimmed = strings.TrimPrefix(trimmed, "```JSON")
-		trimmed = strings.TrimPrefix(trimmed, "```")
-		trimmed = strings.TrimSuffix(trimmed, "```")
-		trimmed = strings.TrimSpace(trimmed)
-	}
-	start := strings.Index(trimmed, "{")
-	end := strings.LastIndex(trimmed, "}")
-	if start == -1 || end == -1 || end < start {
-		return nil, errors.New("response does not contain a json object")
-	}
-	return []byte(trimmed[start : end+1]), nil
 }
 
 func buildImproveMessage(document string, deficiencies []Deficiency) string {

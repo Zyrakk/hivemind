@@ -67,7 +67,7 @@ func ConsultIfNeeded(
 }
 
 func loadConsultantPrompt(promptDir string) (string, error) {
-	path, err := resolvePromptPath(promptDir, "consultant.txt")
+	path, err := ResolvePromptPath(promptDir, "consultant.txt")
 	if err != nil {
 		return "", err
 	}
@@ -80,7 +80,7 @@ func loadConsultantPrompt(promptDir string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func resolvePromptPath(promptDir, filename string) (string, error) {
+func ResolvePromptPath(promptDir, filename string) (string, error) {
 	if strings.TrimSpace(promptDir) == "" {
 		promptDir = "prompts"
 	}
@@ -116,7 +116,7 @@ func resolvePromptPath(promptDir, filename string) (string, error) {
 }
 
 func parseOpinion(content string) (*Opinion, error) {
-	jsonPayload, err := extractJSONObject(content)
+	jsonPayload, err := ExtractJSONObject(content)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func parseOpinion(content string) (*Opinion, error) {
 	return &opinion, nil
 }
 
-func extractJSONObject(content string) ([]byte, error) {
+func ExtractJSONObject(content string) ([]byte, error) {
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return nil, errors.New("empty response")
