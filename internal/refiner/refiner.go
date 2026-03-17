@@ -10,22 +10,23 @@ import (
 	"github.com/zyrakk/hivemind/internal/llm"
 )
 
-// RefinerLLM is the minimal interface the refiner needs.
-// GLMClient already satisfies this.
+// RefinerLLM is the interface for the evaluator (expects JSON output).
 type RefinerLLM interface {
 	Chat(ctx context.Context, systemPrompt, userMessage string) (string, llm.TokenUsage, error)
 }
 
+// TextLLM is the interface for the improver (expects free-form text output).
+type TextLLM interface {
+	ChatText(ctx context.Context, systemPrompt, userMessage string) (string, llm.TokenUsage, error)
+}
+
 type Refiner struct {
-	improver  RefinerLLM
+	improver  TextLLM
 	evaluator RefinerLLM
 	logger    *slog.Logger
 }
 
-func New(improver, evaluator RefinerLLM, logger *slog.Logger) *Refiner {
-	if evaluator == nil {
-		evaluator = improver
-	}
+func New(improver TextLLM, evaluator RefinerLLM, logger *slog.Logger) *Refiner {
 	return &Refiner{
 		improver:  improver,
 		evaluator: evaluator,
@@ -119,7 +120,7 @@ func (r *Refiner) Run(ctx context.Context, document, rubric, improvementPrompt s
 	for i := 0; i < maxIterations; i++ {
 		// Step 1: Improve
 		userMsg := buildImproveMessage(current, lastDeficiencies)
-		improved, usage1, err := r.improver.Chat(ctx, improvementPrompt, userMsg)
+		improved, usage1, err := r.improver.ChatText(ctx, improvementPrompt, userMsg)
 		if err != nil {
 			return nil, fmt.Errorf("improve iteration %d: %w", i+1, err)
 		}

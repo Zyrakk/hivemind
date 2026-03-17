@@ -160,6 +160,16 @@ func (c *GLMClient) Evaluate(ctx context.Context, task, diff, agentsMD string) (
 }
 
 func (c *GLMClient) Chat(ctx context.Context, systemPrompt, userMessage string) (string, TokenUsage, error) {
+	return c.chat(ctx, systemPrompt, userMessage, "json_object")
+}
+
+// ChatText is like Chat but does not constrain the response format,
+// allowing the model to return free-form text (e.g. markdown).
+func (c *GLMClient) ChatText(ctx context.Context, systemPrompt, userMessage string) (string, TokenUsage, error) {
+	return c.chat(ctx, systemPrompt, userMessage, "")
+}
+
+func (c *GLMClient) chat(ctx context.Context, systemPrompt, userMessage, responseFormat string) (string, TokenUsage, error) {
 	if strings.TrimSpace(c.apiKey) == "" {
 		return "", TokenUsage{}, errors.New("glm api key is empty")
 	}
@@ -172,9 +182,9 @@ func (c *GLMClient) Chat(ctx context.Context, systemPrompt, userMessage string) 
 		},
 		Temperature: c.temperature,
 		MaxTokens:   c.maxTokens,
-		ResponseFormat: glmResponseFormat{
-			Type: "json_object",
-		},
+	}
+	if responseFormat != "" {
+		requestPayload.ResponseFormat = &glmResponseFormat{Type: responseFormat}
 	}
 
 	encodedRequest, err := json.Marshal(requestPayload)
@@ -494,11 +504,11 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 }
 
 type glmChatRequest struct {
-	Model          string            `json:"model"`
-	Messages       []glmMessage      `json:"messages"`
-	Temperature    float64           `json:"temperature"`
-	MaxTokens      int               `json:"max_tokens"`
-	ResponseFormat glmResponseFormat `json:"response_format"`
+	Model          string             `json:"model"`
+	Messages       []glmMessage       `json:"messages"`
+	Temperature    float64            `json:"temperature"`
+	MaxTokens      int                `json:"max_tokens"`
+	ResponseFormat *glmResponseFormat `json:"response_format,omitempty"`
 }
 
 type glmMessage struct {

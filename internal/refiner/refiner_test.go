@@ -10,12 +10,12 @@ import (
 	"github.com/zyrakk/hivemind/internal/llm"
 )
 
-type mockRefinerLLM struct {
+type mockLLM struct {
 	responses []string
 	callIndex int
 }
 
-func (m *mockRefinerLLM) Chat(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+func (m *mockLLM) call(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
 	if m.callIndex >= len(m.responses) {
 		return "{}", llm.TokenUsage{}, nil
 	}
@@ -24,18 +24,30 @@ func (m *mockRefinerLLM) Chat(ctx context.Context, system, user string) (string,
 	return resp, llm.TokenUsage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}, nil
 }
 
+func (m *mockLLM) Chat(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+	return m.call(ctx, system, user)
+}
+
+func (m *mockLLM) ChatText(ctx context.Context, system, user string) (string, llm.TokenUsage, error) {
+	return m.call(ctx, system, user)
+}
+
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestNew_NilEvaluatorUsesImprover(t *testing.T) {
-	improver := &mockRefinerLLM{}
-	r := New(improver, nil, testLogger())
+func TestNew_SetsFields(t *testing.T) {
+	improver := &mockLLM{}
+	evaluator := &mockLLM{}
+	r := New(improver, evaluator, testLogger())
 	if r == nil {
 		t.Fatal("expected non-nil refiner")
 	}
-	if r.evaluator != improver {
-		t.Fatal("expected evaluator to default to improver when nil")
+	if r.improver != improver {
+		t.Fatal("expected improver to be set")
+	}
+	if r.evaluator != evaluator {
+		t.Fatal("expected evaluator to be set")
 	}
 }
 
@@ -120,8 +132,8 @@ func TestBuildImproveMessage_WithDeficiencies(t *testing.T) {
 }
 
 func TestRefine_ConvergesFirstPass(t *testing.T) {
-	improver := &mockRefinerLLM{responses: []string{"improved doc"}}
-	evaluator := &mockRefinerLLM{responses: []string{
+	improver := &mockLLM{responses: []string{"improved doc"}}
+	evaluator := &mockLLM{responses: []string{
 		`{"overall_score": 0.9, "verdict": "accept", "summary": "Good.", "deficiencies": []}`,
 	}}
 	r := New(improver, evaluator, testLogger())
@@ -147,8 +159,8 @@ func TestRefine_ConvergesFirstPass(t *testing.T) {
 }
 
 func TestRefine_IteratesAndConverges(t *testing.T) {
-	improver := &mockRefinerLLM{responses: []string{"v1", "v2", "v3"}}
-	evaluator := &mockRefinerLLM{responses: []string{
+	improver := &mockLLM{responses: []string{"v1", "v2", "v3"}}
+	evaluator := &mockLLM{responses: []string{
 		`{"overall_score": 0.5, "verdict": "iterate", "summary": "Needs work.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s1"},{"criterion":"b","section":"s","description":"d2","suggestion":"s2"},{"criterion":"c","section":"s","description":"d3","suggestion":"s3"}]}`,
 		`{"overall_score": 0.6, "verdict": "iterate", "summary": "Better.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s1"},{"criterion":"b","section":"s","description":"d2","suggestion":"s2"}]}`,
 		`{"overall_score": 0.9, "verdict": "accept", "summary": "Done.", "deficiencies": []}`,
@@ -170,8 +182,8 @@ func TestRefine_IteratesAndConverges(t *testing.T) {
 }
 
 func TestRefine_MaxIterationCap(t *testing.T) {
-	improver := &mockRefinerLLM{responses: []string{"v1", "v2", "v3", "v4"}}
-	evaluator := &mockRefinerLLM{responses: []string{
+	improver := &mockLLM{responses: []string{"v1", "v2", "v3", "v4"}}
+	evaluator := &mockLLM{responses: []string{
 		`{"overall_score": 0.3, "verdict": "iterate", "summary": "Bad.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s"},{"criterion":"b","section":"s","description":"d2","suggestion":"s"},{"criterion":"c","section":"s","description":"d3","suggestion":"s"},{"criterion":"d","section":"s","description":"d4","suggestion":"s"}]}`,
 		`{"overall_score": 0.4, "verdict": "iterate", "summary": "Bad.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s"},{"criterion":"b","section":"s","description":"d2","suggestion":"s"},{"criterion":"c","section":"s","description":"d3","suggestion":"s"}]}`,
 		`{"overall_score": 0.5, "verdict": "iterate", "summary": "Bad.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s"},{"criterion":"b","section":"s","description":"d2","suggestion":"s"}]}`,
@@ -191,8 +203,8 @@ func TestRefine_MaxIterationCap(t *testing.T) {
 }
 
 func TestRefine_StallDetection(t *testing.T) {
-	improver := &mockRefinerLLM{responses: []string{"v1", "v2"}}
-	evaluator := &mockRefinerLLM{responses: []string{
+	improver := &mockLLM{responses: []string{"v1", "v2"}}
+	evaluator := &mockLLM{responses: []string{
 		`{"overall_score": 0.5, "verdict": "iterate", "summary": "Mid.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s"},{"criterion":"b","section":"s","description":"d2","suggestion":"s"},{"criterion":"c","section":"s","description":"d3","suggestion":"s"}]}`,
 		`{"overall_score": 0.5, "verdict": "iterate", "summary": "Still mid.", "deficiencies": [{"criterion":"a","section":"s","description":"d1","suggestion":"s"},{"criterion":"b","section":"s","description":"d2","suggestion":"s"},{"criterion":"c","section":"s","description":"d3","suggestion":"s"}]}`,
 	}}
@@ -210,8 +222,8 @@ func TestRefine_StallDetection(t *testing.T) {
 }
 
 func TestRefine_MalformedEvalJSON(t *testing.T) {
-	improver := &mockRefinerLLM{responses: []string{"v1"}}
-	evaluator := &mockRefinerLLM{responses: []string{"this is not json"}}
+	improver := &mockLLM{responses: []string{"v1"}}
+	evaluator := &mockLLM{responses: []string{"this is not json"}}
 	r := New(improver, evaluator, testLogger())
 	result, err := r.Run(context.Background(), "original", "rubric", "improve prompt")
 	if err != nil {
@@ -229,13 +241,13 @@ func TestRefine_MalformedEvalJSON(t *testing.T) {
 	// Should not panic
 }
 
-func TestRefine_NilEvaluatorUsesSameClient(t *testing.T) {
-	// Interleaved: improve, eval, improve, eval...
-	mock := &mockRefinerLLM{responses: []string{
+func TestRefine_SameClientForBothRoles(t *testing.T) {
+	// Interleaved: improve (ChatText), eval (Chat), ...
+	mock := &mockLLM{responses: []string{
 		"improved doc",
 		`{"overall_score": 0.9, "verdict": "accept", "summary": "Good.", "deficiencies": []}`,
 	}}
-	r := New(mock, nil, testLogger())
+	r := New(mock, mock, testLogger())
 	result, err := r.Run(context.Background(), "original", "rubric", "improve prompt")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
